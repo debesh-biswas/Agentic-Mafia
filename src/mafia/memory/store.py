@@ -88,20 +88,20 @@ class MemoryStore:
     def _emb(self, text: str) -> bytes:
         return np.asarray(self.embedder.embed(text), dtype=np.float32).tobytes()
 
-    def _insert(self, type, text, about, role_context, game, importance, confidence, cites) -> int:
+    def _insert(self, type, text, about, role_context, game, importance, confidence, cites, created=None) -> int:
         """Insert without committing; caller holds the lock."""
         cur = self._db.execute(
             "INSERT INTO memories (type,text,about,role_context,game_created,game_updated,importance,confidence,cites,embedding)"
             " VALUES (?,?,?,?,?,?,?,?,?,?)",
-            (type, text, json.dumps(list(about)), role_context, game, game, importance, confidence,
+            (type, text, json.dumps(list(about)), role_context, created or game, game, importance, confidence,
              json.dumps(list(cites)), self._emb(text)),
         )
         return cur.lastrowid
 
-    def add(self, type, text, *, about=(), role_context=None, game, importance, confidence=None, cites=()) -> int:
+    def add(self, type, text, *, about=(), role_context=None, game, importance, confidence=None, cites=(), created=None) -> int:
         with self._lock:
             try:
-                i = self._insert(type, text, about, role_context, game, importance, confidence, cites)
+                i = self._insert(type, text, about, role_context, game, importance, confidence, cites, created)
                 self._db.commit()
                 return i
             except Exception:

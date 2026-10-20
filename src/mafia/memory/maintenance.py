@@ -28,7 +28,8 @@ def compress(store, mcfg, names, call, me: str, game: int) -> tuple[list[tuple[s
             out.append(("fallback", "debug", dict(call_type="compress", reason=str(e), chosen=None)))
             continue
         i = store.add("episodic", res.summary, game=game, importance=max(m.importance for m in group),
-                      cites=[m.id for m in group])
+                      cites=[m.id for m in group],
+                      created=max(m.game_created for m in group))  # stays in its window: never re-merged
         store.set_status([m.id for m in group], "merged")
         merged += len(group)
         out.append(wrote(f"private:{me}", i, "add", res.summary, "episodic"))

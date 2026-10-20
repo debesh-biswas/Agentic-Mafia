@@ -296,12 +296,20 @@ def test_compress_merges_window_cites_max_importance_and_hides_originals(tmp_pat
     out, merged = compress(s, MC, NAMES, call, "dev", 30)
     assert merged == 3 and len(call.users) == 1  # single-memory window and game 25 (too new) untouched
     new = [m for m in s.active(("episodic",)) if m.text == "Merged."]
-    assert len(new) == 1 and new[0].cites == ids[:3] and new[0].game_created == 30
+    assert len(new) == 1 and new[0].cites == ids[:3] and new[0].game_created == 3 and new[0].game_updated == 30
     assert new[0].importance == max(s.get(i).importance for i in ids[:3])  # max of the group, not the model's 1
     assert all(s.get(i).status == "merged" for i in ids[:3]) and s.get(ids[3]).status == "active"
     assert out == [("memory_write", "private:dev", dict(memory_id=new[0].id, type="episodic", action="add", text="Merged."))]
     got = {m.id for m in retrieve(s, "game summary", 30, MC.retrieval, k=20)}
     assert not got & set(ids[:3]) and new[0].id in got
+
+
+def test_summary_is_not_merged_again(tmp_path):
+    s, ids = epi_store(tmp_path, [1, 2, 3])
+    call = caller([{"summary": "Merged.", "importance": 1}])
+    compress(s, MC, NAMES, call, "dev", 20)
+    out, merged = compress(s, MC, NAMES, caller([]), "dev", 30)  # no call is made: the lone summary stays in window 0
+    assert merged == 0 and out == [] and len(s.active(("episodic",))) == 1
 
 
 def test_compress_skips_window_on_format_error(tmp_path):
@@ -342,8 +350,17 @@ def test_deep_reflection_uses_shared_apply_and_shown_ids(tmp_path):
     adds = [m for m in s.active(("reflection",)) if m.text == "I trust too fast"]
     assert adds[0].cites == [e[-1]] and adds[0].about == ["self"]  # unshown cite dropped
     assert not [m for m in s.active() if m.text == "lesson-ish"]  # lessons not allowed here
+    assert any(t == "fallback" and "dropped 1 lesson" in p["reason"] for t, _, p in out)
     assert s.get(h[-1]).text == "rewrite" and s.get(other).text == "unseen belief"
     assert any(t == "memory_write" and p["action"] == "update" for t, _, p in out)
+
+
+def test_deep_reflection_cap_is_three(tmp_path):
+    s = store(tmp_path)
+    s.add("episodic", "x", game=1, importance=5)
+    call = caller([{"insights": [ins(f"i{k}", kind="reflection") for k in range(4)]}] * 2)
+    assert deep_reflect(s, NAMES, call, "dev", 5)[0][0] == "fallback"  # schema rejects 4 -> format error, nothing written
+    assert len(s.active(("reflection",))) == 0
 
 
 def test_hoh_ids_recorded_by_reflect(tmp_path):
@@ -386,13 +403,14 @@ def test_30_game_season_keeps_memory_bounded(tmp_path):
     assert len(maint) == 3 * 7 and sum(e.payload["merged"] for e in maint) > 0
     # Derivation. Compression at games 10/20/30 merges episodic memories with game_created <= g-10, so after the
     # last one (g=30) the uncompressed ones are games 21..30 (10) plus one merged summary per 10-game window
-    # touched (windows 0..2, but each older summary is itself re-merged into its window) -> <= 10 + 3.
+    # touched. A summary keeps its window's latest game_created, so it is never re-merged: window 0 -> 1 summary,
+    # window 1 -> 1 summary (window 2 = games 21..30 is still raw) -> 10 + 2 = 12.
     # Reflections (helped_or_hurt) are one per game and never faded (importance 6): 30. Insights: reflect adds <= 1
     # per game and deep reflection <= 1 per 5 games: <= 30 + 6.
-    # Total active <= 13 + 30 + 36 = 79 against 30 games * (1 episodic + 1 reflection + 1 insight) = 90+ unbounded.
+    # Total active <= 12 + 30 + 36 = 78 against 30 games * (1 episodic + 1 reflection + 1 insight) = 90+ unbounded.
     for p in sorted((d / "memory").glob("*.sqlite")):
         st = MemoryStore(p, FakeEmbedder())
         act = st.active()
-        assert len([m for m in act if m.type == "episodic"]) <= 13
-        assert len(act) <= 79
+        assert len([m for m in act if m.type == "episodic"]) <= 12
+        assert len(act) <= 78
         st.close()

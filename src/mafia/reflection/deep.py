@@ -25,6 +25,7 @@ def deep_reflect(store, names, call, me: str, game: int) -> list[tuple[str, str,
         return [("fallback", "debug", dict(call_type="deep_reflect", reason=str(e), chosen=None))]
     # kinds are reflection or belief only (DRD 8.2); lessons are dropped
     keep = [i for i in res.insights if i.kind != "lesson"]
-    out = []
+    out = [("fallback", "debug", dict(call_type="deep_reflect", reason=f"dropped {len(res.insights) - len(keep)} lesson insight(s)",
+                                      chosen=None))] if len(keep) < len(res.insights) else []
     apply_insights(store, names, f"private:{me}", game, keep, {m.id: m for m in epi + hoh}, out, "deep_reflect")
     return out

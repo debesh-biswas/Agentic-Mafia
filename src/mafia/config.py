@@ -73,13 +73,13 @@ class Reflection(Cfg):
 
 
 class Compression(Cfg):
-    every_games: int
-    merge_episodic_older_than_games: int
+    every_games: int = Field(gt=0)
+    merge_episodic_older_than_games: int = Field(ge=0)
 
 
 class Fading(Cfg):
     max_importance: int
-    unretrieved_for_games: int
+    unretrieved_for_games: int = Field(ge=0)
 
 
 class Memory(Cfg):
@@ -89,7 +89,7 @@ class Memory(Cfg):
     reflection: Reflection
     compression: Compression
     fading: Fading
-    deep_reflection_every_games: int
+    deep_reflection_every_games: int = Field(gt=0)
 
 
 class Scoring(Cfg):
@@ -137,7 +137,7 @@ class Run(Cfg):
     memory_config: Path
     prompt_version: int
     record_llm_responses: bool
-    snapshot_memory_every: int
+    snapshot_memory_every: int = Field(gt=0)
 
 
 T = TypeVar("T", bound=Cfg)

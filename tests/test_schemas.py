@@ -26,8 +26,9 @@ def test_memory_ids():
     assert i.cites == [42, 7, 8] and i.target_id == 5
     r = ReflectInsights(insights=[], keep_ids=["m1", 2], helped_or_hurt="", game_summary="", summary_importance=1)
     assert r.keep_ids == [1, 2]
-    with pytest.raises(ValidationError):
-        Insight(**INS, cites=["x42"])
+    for bad in (["x42"], [True], [-1]):
+        with pytest.raises(ValidationError):
+            Insight(**INS, cites=bad)
 
 
 @pytest.mark.parametrize("u", [-1, 5])

@@ -51,7 +51,7 @@ def test_priority_pass_not_consumed_when_tunable_off():
     s = mk(rules=R.model_copy(update={"priority_pass_consumes_turn": False}))
     s.record_turn("a", say(0, ["b"]))
     assert s.next_speaker() == ("b", True)
-    s.record_turn("b", PASS)
+    s.record_turn("b", PASS, is_priority=True)
     assert s.budget_remaining == 13 and s.turns_left("b") == 3
     p, _ = s.next_speaker()
     s.record_turn(p, PASS)  # ordinary pass still consumes
@@ -62,11 +62,18 @@ def test_priority_first_and_pair_once():
     s = mk()
     s.record_turn("a", say(0, ["b"]))
     assert s.next_speaker() == ("b", True)
-    s.record_turn("b", say(0, ["a"]))  # counter-accusation: a gets priority (new ordered pair)
-    assert s.next_speaker() == ("a", True)
+    s.record_turn("b", say(0), is_priority=True)
     s.record_turn("a", say(0, ["b"]))  # (a,b) already granted today
-    nx = s.next_speaker()
-    assert nx[1] is False
+    assert s.next_speaker()[1] is False
+
+
+def test_counter_accusation_gets_no_priority():
+    s = mk()
+    s.record_turn("a", say(0, ["b"]))  # a accuses b: b gets priority
+    assert s.next_speaker() == ("b", True)
+    s.record_turn("b", say(0, ["a"]), is_priority=True)  # b accuses a back: no priority for a
+    assert not s.priority_queue
+    assert s.next_speaker()[1] is False
 
 
 def test_counter_accusation_no_extra_priority_when_queued():

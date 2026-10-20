@@ -18,7 +18,6 @@ class DiscussionScheduler:
         self.priority_queue: deque[str] = deque()
         self.granted_pairs: set[tuple[str, str]] = set()
         self.consecutive_passes = 0
-        self._last_priority = False
 
     def turns_left(self, pid: str) -> int:
         return self.rules.max_turns_per_player_per_day - self.turns_used[pid]
@@ -32,15 +31,12 @@ class DiscussionScheduler:
         while self.priority_queue:
             pid = self.priority_queue.popleft()
             if pid in eligible:
-                self._last_priority = True
                 return pid, True
         top = max(self.urgency[p] for p in eligible)
-        self._last_priority = False
         return self.rng.choice(sorted(p for p in eligible if self.urgency[p] == top)), False
 
-    def record_turn(self, pid: str, decision: SpeakDecision) -> None:
-        free = decision.message is None and self._last_priority and not self.rules.priority_pass_consumes_turn
-        self._last_priority = False
+    def record_turn(self, pid: str, decision: SpeakDecision, is_priority: bool = False) -> None:
+        free = decision.message is None and is_priority and not self.rules.priority_pass_consumes_turn
         if not free:
             self.budget_remaining -= 1
             self.turns_used[pid] += 1
@@ -50,6 +46,8 @@ class DiscussionScheduler:
             return
         self.consecutive_passes = 0
         for accused in decision.accuses:
-            if (pid, accused) not in self.granted_pairs and accused not in self.priority_queue:
+            # once per ordered pair; a counter-accusation (accused->pid already granted) gets no priority
+            if (pid, accused) not in self.granted_pairs and (accused, pid) not in self.granted_pairs \
+                    and accused not in self.priority_queue:
                 self.granted_pairs.add((pid, accused))
                 self.priority_queue.append(accused)

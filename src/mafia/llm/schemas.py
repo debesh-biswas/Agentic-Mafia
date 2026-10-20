@@ -16,6 +16,8 @@ def _mem_id(v):
         if not m:
             raise ValueError(f"bad memory id: {v!r}")
         return int(m[1])
+    if isinstance(v, bool) or (isinstance(v, int) and v < 0):
+        raise ValueError(f"bad memory id: {v!r}")
     return v
 
 

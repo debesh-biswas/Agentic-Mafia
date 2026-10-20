@@ -20,7 +20,7 @@ class LLMError(Exception):
 
 
 class LLMFormatError(LLMError):
-    """Still unparseable after the one corrective retry; the engine's fallback takes over."""
+    """Still unparseable after the one corrective retry; the engine goes straight to its fallback (no second agent call)."""
 
 
 class ProviderMismatch(RuntimeError):

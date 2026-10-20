@@ -3,7 +3,7 @@ from typing import Literal, TypeVar
 
 import yaml
 from mafia.types import Phase, Role
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 ROOT = Path(__file__).resolve().parents[2]  # repo root (editable install)
 
@@ -32,6 +32,9 @@ class Rules(Cfg):
     reveal_roles_on_elimination: bool
 
 
+CALL_TYPES = {"plan", "night", "speak", "vote", "last_words", "reflect", "summaries", "deep_reflect", "compress"}
+
+
 class ModelCfg(Cfg):
     name: str
     base_url: str
@@ -45,6 +48,15 @@ class ModelCfg(Cfg):
     max_output_tokens: dict[str, int]
     timeout_s: int
     max_concurrency: int
+
+    @model_validator(mode="after")
+    def _check(self):
+        missing = CALL_TYPES - self.reasoning.keys()
+        if missing:
+            raise ValueError(f"reasoning missing call types: {sorted(missing)}")
+        if self.provider_pin is not None and not self.provider_pin.get("order"):
+            raise ValueError("provider_pin needs a non-empty 'order'")
+        return self
 
 
 class Retrieval(Cfg):

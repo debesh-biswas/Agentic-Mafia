@@ -11,6 +11,7 @@ from mafia.engine.scheduler import DiscussionScheduler
 from mafia.engine.seeds import game_seed, rng_for
 from mafia.engine.state import GameState, PlayerState
 from mafia.engine.views import AgentView, TranscriptLine, build_view
+from mafia.llm.client import LLMFormatError
 from mafia.llm.schemas import SpeakDecision
 from mafia.logs.events import Event
 from mafia.types import Phase, Role, Team
@@ -53,7 +54,7 @@ class Game:
     # ---- plumbing -------------------------------------------------------------------------
     def emit(self, type: str, visibility: str, actor: str | None = None, targets: list[str] | None = None,
              **payload) -> None:
-        """The single place events leave the engine (Task 4 adds a writer here)."""
+        """The single place events leave the engine."""
         if self.events is None:
             return
         self._seq += 1
@@ -83,17 +84,21 @@ class Game:
             if self._prio and pid in self._reply else None
 
     def _ask(self, pid: str, phase: Phase, method: str, validate, fallback):
-        """DRD 5.9: call, validate, one retry with the error in the view, then fallback."""
-        err = None
+        """DRD 5.9: call, validate, one retry with the error in the view, then fallback.
+        LLMFormatError (client already retried) goes straight to fallback; other LLMError/ProviderMismatch propagate."""
+        err = why = None
         for attempt in (0, 1):
             view = self.view_for(pid, phase, retry_error=err and
                                  f"Your last answer was invalid: {err}. Answer again with valid JSON.")
             try:
                 return validate(getattr(self.agents[pid], method)(view), attempt == 1)
             except (Invalid, ValidationError, ValueError, TypeError) as e:  # bad agent output; engine bugs propagate
-                err = str(e) or type(e).__name__
+                err, why = str(e) or type(e).__name__, f"{type(e).__name__}: {e}"
+            except LLMFormatError as e:
+                why = f"{type(e).__name__}: {e}"
+                break
         chosen = fallback()
-        self.emit("fallback", "debug", pid, call_type=method, reason=err, chosen=str(chosen))
+        self.emit("fallback", "debug", pid, call_type=method, reason=why, chosen=str(chosen))
         return chosen
 
     def _cap(self, text: str, cap: int, final: bool, pid: str, method: str) -> str:

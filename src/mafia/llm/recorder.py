@@ -29,13 +29,16 @@ class RecordingLLM(_Sync):
         try:
             model, rec = await self.inner.acall(call_type, system, user, schema, agent_id)
             row |= {"response": model.model_dump(mode="json"), "record": rec}
+            self._write(row)
             return model, rec
         except LLMError as e:
             row |= {"error": str(e), "format": isinstance(e, LLMFormatError), "record": e.record}
+            self._write(row)
             raise
-        finally:
-            with self.path.open("a") as f:
-                f.write(json.dumps(row) + "\n")
+
+    def _write(self, row):
+        with self.path.open("a") as f:
+            f.write(json.dumps(row) + "\n")
 
 
 class ReplayLLM(_Sync):
@@ -53,6 +56,8 @@ class ReplayLLM(_Sync):
         row = self.rows.get((agent_id, call_type, i))
         if row is None:
             raise KeyError(f"no recorded response for (agent={agent_id!r}, call_type={call_type!r}, call_index={i})")
+        if "error" not in row and "response" not in row or "error" in row and not {"format", "record"} <= row.keys():
+            raise ValueError(f"malformed recorded row for key {row['key']}: {sorted(row)}")
         if "error" in row:
             raise (LLMFormatError if row["format"] else LLMError)(row["error"], row["record"])
         return schema.model_validate(row["response"]), row["record"]

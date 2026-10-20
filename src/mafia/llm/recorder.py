@@ -5,7 +5,7 @@ import json
 from collections import Counter
 from pathlib import Path
 
-from mafia.llm.client import parse_with_retry
+from mafia.llm.client import LLMError, LLMFormatError, parse_with_retry
 from pydantic import BaseModel
 
 
@@ -20,20 +20,31 @@ class RecordingLLM(_Sync):
     def __init__(self, inner, path):
         self.inner, self.path, self.n = inner, Path(path), Counter()
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.write_text("")  # one file per game: a rerun starts clean
 
     async def acall(self, call_type, system, user, schema, agent_id):
-        model, rec = await self.inner.acall(call_type, system, user, schema, agent_id)
-        i = self.n[agent_id, call_type]
+        i = self.n[agent_id, call_type]  # taken before the await so concurrent calls keep distinct indices
         self.n[agent_id, call_type] += 1
-        with self.path.open("a") as f:
-            f.write(json.dumps({"key": [agent_id, call_type, i], "response": model.model_dump(mode="json"),
-                                "record": rec}) + "\n")
-        return model, rec
+        row: dict = {"key": [agent_id, call_type, i]}
+        try:
+            model, rec = await self.inner.acall(call_type, system, user, schema, agent_id)
+            row |= {"response": model.model_dump(mode="json"), "record": rec}
+            return model, rec
+        except LLMError as e:
+            row |= {"error": str(e), "format": isinstance(e, LLMFormatError), "record": e.record}
+            raise
+        finally:
+            with self.path.open("a") as f:
+                f.write(json.dumps(row) + "\n")
 
 
 class ReplayLLM(_Sync):
     def __init__(self, path):
-        self.rows = {tuple(r["key"]): r for r in map(json.loads, Path(path).read_text().splitlines())}
+        self.rows = {}
+        for r in map(json.loads, Path(path).read_text().splitlines()):
+            if tuple(r["key"]) in self.rows:
+                raise ValueError(f"duplicate recorded key {r['key']} in {path}")
+            self.rows[tuple(r["key"])] = r
         self.n = Counter()
 
     async def acall(self, call_type, system, user, schema, agent_id):
@@ -42,6 +53,8 @@ class ReplayLLM(_Sync):
         row = self.rows.get((agent_id, call_type, i))
         if row is None:
             raise KeyError(f"no recorded response for (agent={agent_id!r}, call_type={call_type!r}, call_index={i})")
+        if "error" in row:
+            raise (LLMFormatError if row["format"] else LLMError)(row["error"], row["record"])
         return schema.model_validate(row["response"]), row["record"]
 
 

@@ -147,5 +147,5 @@ def llm_check(model_config: str = O, model: str | None = None):
         except Exception as e:  # any failure is a FAIL line, not a crash
             status, retries = f"FAIL ({type(e).__name__}: {str(e)[:120]})", getattr(e, "record", {}).get("format_errors", "-")
             failed += 1
-        typer.echo(f"{name:18} {status}  {time.monotonic() - t0:.1f}s  format_retries={retries}")
+        typer.echo(f"{name:18} {status}  {time.monotonic() - t0:.1f}s  format_errors={retries}")
     raise typer.Exit(1 if failed else 0)

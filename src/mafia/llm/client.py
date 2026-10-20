@@ -2,6 +2,7 @@
 acall/call(call_type, system, user, schema, agent_id) -> (parsed model, call record)."""
 import asyncio
 import hashlib
+import os
 import re
 import time
 
@@ -29,6 +30,7 @@ class ProviderMismatch(RuntimeError):
 def strip_reasoning(text: str) -> str:
     """Drop <think> blocks, Harmony analysis channels and ```json fences."""
     text = re.sub(r".*</think>", "", text, flags=re.S)
+    text = re.sub(r"<think>.*$", "", text, flags=re.S)  # unclosed: cut off mid-thought
     final = re.findall(r"<\|channel\|>final<\|message\|>(.*?)(?:<\|end\|>|<\|return\|>|$)", text, flags=re.S)
     if final:
         text = final[-1]
@@ -56,12 +58,19 @@ async def parse_with_retry(send, system: str, user: str, schema: type[BaseModel]
             for k in ("tokens_in", "tokens_out", "tokens_reasoning", "retries"):
                 rec[k] += meta.get(k, 0)
             rec["provider"] = meta.get("provider") or rec["provider"]
+            rec["finish_reason"] = meta.get("finish_reason")
             if meta.get("cost") is not None:
                 rec["cost"] = (rec["cost"] or 0) + meta["cost"]
             if meta.get("reasoning"):
                 rec["reasoning"] = meta["reasoning"]  # debug only, never fed back to agents
+            clean = strip_reasoning(text or "")
+            if meta.get("finish_reason") == "length" or not clean:
+                rec["format_errors"] += 1
+                rec["error"] = ("truncated at max_tokens (reasoning may have consumed the budget)"
+                                if meta.get("finish_reason") == "length" else "empty content")
+                raise LLMFormatError(f"{call_type}/{agent_id}: {rec['error']}", rec)  # a retry would hit the same wall
             try:
-                return schema.model_validate_json(strip_reasoning(text or "")), rec
+                return schema.model_validate_json(clean), rec
             except ValidationError as e:
                 rec["format_errors"] += 1
                 err = _error_text(e)
@@ -91,13 +100,14 @@ class LLMClient:
     def __init__(self, cfg: ModelCfg, sdk=None):
         self.cfg = cfg
         self._sdk_override = sdk  # tests pass an object shaped like AsyncOpenAI
+        if sdk is None and cfg.api_key_env and not os.environ.get(cfg.api_key_env):
+            raise RuntimeError(f"environment variable {cfg.api_key_env} is not set or empty")
         self._loop_state = None  # (loop, sdk, semaphore): connection pools can't cross event loops
 
     def _state(self):
         loop = asyncio.get_running_loop()
         if self._loop_state is None or self._loop_state[0] is not loop:
-            import os
-            key = os.environ.get(self.cfg.api_key_env or "", "") if self.cfg.api_key_env else "none"
+            key = os.environ.get(self.cfg.api_key_env) if self.cfg.api_key_env else "none"
             sdk = self._sdk_override or openai.AsyncOpenAI(
                 base_url=self.cfg.base_url, api_key=key or "none", timeout=self.cfg.timeout_s, max_retries=0)
             self._loop_state = (loop, sdk, asyncio.Semaphore(self.cfg.max_concurrency))
@@ -142,13 +152,13 @@ class LLMClient:
         msg, u = r.choices[0].message, getattr(r, "usage", None)
         provider = getattr(r, "provider", None)
         pin = (self.cfg.provider_pin or {}).get("order")
-        if pin and provider and provider.lower() not in {p.lower() for p in pin}:
+        if self.cfg.provider_pin and (not provider or provider.lower() not in {p.lower() for p in pin or []}):
             raise ProviderMismatch(f"served by {provider!r}, pinned to {pin}")
         details = getattr(u, "completion_tokens_details", None)
         return msg.content, {
             "tokens_in": getattr(u, "prompt_tokens", 0) or 0, "tokens_out": getattr(u, "completion_tokens", 0) or 0,
             "tokens_reasoning": getattr(details, "reasoning_tokens", 0) or 0, "retries": retries,
-            "provider": provider, "cost": getattr(u, "cost", None),
+            "provider": provider, "finish_reason": r.choices[0].finish_reason, "cost": getattr(u, "cost", None),
             "reasoning": getattr(msg, "reasoning", None) or getattr(msg, "reasoning_content", None)}
 
     async def acall(self, call_type: str, system: str, user: str, schema: type[BaseModel], agent_id: str):
@@ -156,4 +166,11 @@ class LLMClient:
         return await parse_with_retry(lambda m: self._send(m, kw), system, user, schema, call_type, agent_id)
 
     def call(self, call_type, system, user, schema, agent_id):
-        return asyncio.run(self.acall(call_type, system, user, schema, agent_id))
+        async def run():
+            try:
+                return await self.acall(call_type, system, user, schema, agent_id)
+            finally:  # close the pool before this event loop dies
+                if self._loop_state:
+                    await self._loop_state[1].close()
+                    self._loop_state = None
+        return asyncio.run(run())

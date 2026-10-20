@@ -1,5 +1,7 @@
 from types import SimpleNamespace as NS
 
+import json
+
 import pytest
 from mafia.cli import app
 from mafia.config import ROOT, ModelCfg, load
@@ -61,6 +63,10 @@ class FakeSDK:
     def __init__(self, *items):
         self.items, self.calls = list(items), []
         self.chat = NS(completions=NS(create=self.create))
+        self.closed = 0
+
+    async def close(self):
+        self.closed += 1
 
     async def create(self, **kw):
         self.calls.append(kw)
@@ -75,15 +81,15 @@ class HTTPErr(Exception):
         self.status_code = code
 
 
-def resp(content=V, provider=None):
-    return NS(choices=[NS(message=NS(content=content, reasoning="because"))], provider=provider,
+def resp(content=V, provider=None, finish="stop"):
+    return NS(choices=[NS(message=NS(content=content, reasoning="because"), finish_reason=finish)], provider=provider,
               usage=NS(prompt_tokens=10, completion_tokens=5, cost=0.001,
                        completion_tokens_details=NS(reasoning_tokens=3)))
 
 
 def cfg(name="model_openrouter", **kw):
     c = load(ModelCfg, ROOT / f"config/{name}.yaml")
-    c.provider_pin = kw.pop("pin", c.provider_pin)
+    c.provider_pin = kw.pop("pin", None)
     return c
 
 
@@ -102,7 +108,7 @@ def test_request_shape_and_record():
     assert kw["response_format"]["json_schema"]["name"] == "VoteDecision" and kw["max_tokens"] == 600
     assert rec | {"latency_s": 0, "prompt_hash": 0} == {
         "call_type": "vote", "agent": "a1", "tokens_in": 10, "tokens_out": 5, "tokens_reasoning": 3, "retries": 0,
-        "format_errors": 0, "error": None, "provider": "p", "cost": 0.001, "reasoning": "because",
+        "format_errors": 0, "error": None, "provider": "p", "finish_reason": "stop", "cost": 0.001, "reasoning": "because",
         "latency_s": 0, "prompt_hash": 0}
 
 
@@ -154,3 +160,62 @@ def test_llm_check_cli(monkeypatch):
     monkeypatch.setattr(c.LLMClient, "acall", fake)
     r = CliRunner().invoke(app, ["llm-check", "--model-config", str(ROOT / "config/model_local.yaml"), "--model", "x"])
     assert r.exit_code == 1 and r.output.count("PASS") == 9 and "Compressed" in r.output and "FAIL" in r.output
+
+
+def test_unclosed_think_stripped():
+    assert strip_reasoning(f"{V}<think>cut off mid") == V
+
+
+def test_truncated_and_empty_fail_without_retry():
+    for content, finish, msg in [(V, "length", "truncated at max_tokens"), ("<think>x</think>", "stop", "empty content"),
+                                 (None, "stop", "empty content")]:
+        cl, sdk = client(cfg(), resp(content, finish=finish), resp())
+        with pytest.raises(LLMFormatError, match=msg) as e:
+            cl.call("vote", "s", "u", VoteDecision, "a")
+        assert len(sdk.calls) == 1 and e.value.record["finish_reason"] == finish
+
+
+def test_record_replay_with_failure_in_middle(tmp_path):
+    p = tmp_path / "g.jsonl"
+    rec = RecordingLLM(MockLLM([V, "bad", "bad", V]), p)
+    out = []
+    for _ in range(3):
+        try:
+            out.append(rec.call("vote", "s", "u", VoteDecision, "a1")[0])
+        except LLMFormatError:
+            out.append(None)
+    assert [o is None for o in out] == [False, True, False]
+    rp = ReplayLLM(p)
+    got = []
+    for _ in range(3):
+        try:
+            got.append(rp.call("vote", "", "", VoteDecision, "a1")[0])
+        except LLMFormatError as e:
+            assert e.record["format_errors"] == 2
+            got.append(None)
+    assert got == out
+    RecordingLLM(MockLLM([]), p)  # truncates
+    assert p.read_text() == ""
+
+
+def test_replay_duplicate_key(tmp_path):
+    p = tmp_path / "d.jsonl"
+    row = json.dumps({"key": ["a", "vote", 0], "response": {"vote": "Bo"}, "record": {}})
+    p.write_text(row + "\n" + row + "\n")
+    with pytest.raises(ValueError, match="duplicate"):
+        ReplayLLM(p)
+
+
+def test_missing_api_key_and_pin_without_provider(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "")
+    with pytest.raises(RuntimeError, match="OPENROUTER_API_KEY"):
+        LLMClient(cfg())
+    cl, _ = client(cfg(pin={"order": ["P"]}), resp(provider=None))
+    with pytest.raises(ProviderMismatch):
+        cl.call("vote", "s", "u", VoteDecision, "a")
+
+
+def test_sync_call_closes_sdk():
+    cl, sdk = client(cfg(), resp())
+    cl.call("vote", "s", "u", VoteDecision, "a")
+    assert sdk.closed == 1

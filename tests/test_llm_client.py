@@ -105,7 +105,7 @@ def test_request_shape_and_record():
     out, rec = cl.call("vote", "sys", "usr", VoteDecision, "a1")
     kw = sdk.calls[0]
     assert out.vote == "Bo" and kw["extra_body"] == {"reasoning": {"effort": "medium"}, "provider": {"order": ["P"]}}
-    assert kw["response_format"]["json_schema"]["name"] == "VoteDecision" and kw["max_tokens"] == 600
+    assert kw["response_format"]["json_schema"]["name"] == "VoteDecision" and kw["max_tokens"] == 2000
     assert rec | {"latency_s": 0, "prompt_hash": 0} == {
         "call_type": "vote", "agent": "a1", "tokens_in": 10, "tokens_out": 5, "tokens_reasoning": 3, "retries": 0,
         "format_errors": 0, "error": None, "provider": "p", "finish_reason": "stop", "cost": 0.001, "reasoning": "because",
@@ -118,7 +118,7 @@ def test_local_reasoning_param_and_token_budgets():
     cl.call("deep_reflect", "s", "u", VoteDecision, "a")
     cl.call("summaries", "s", "u", VoteDecision, "a")
     assert [c["reasoning_effort"] for c in sdk.calls] == ["low", "medium", "low"]
-    assert [c["max_tokens"] for c in sdk.calls] == [600, 1500, 1200] and "extra_body" not in sdk.calls[0]
+    assert [c["max_tokens"] for c in sdk.calls] == [2000, 3000, 1500] and "extra_body" not in sdk.calls[0]
 
 
 def test_network_backoff_then_success_and_exhaustion():

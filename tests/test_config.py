@@ -25,6 +25,7 @@ def test_personas_seven():
 def test_runs(name):
     r = load_run(C / f"{name}.yaml")
     assert r.rules_config == ROOT / "config/rules.yaml"
+    assert r.model_file.exists()
 
 
 def test_unknown_key_rejected(tmp_path):
@@ -33,3 +34,12 @@ def test_unknown_key_rejected(tmp_path):
     p.write_text(yaml.dump(d))
     with pytest.raises(ValidationError):
         load(Rules, p)
+
+
+def test_cli_play_parses():
+    from typer.testing import CliRunner
+
+    from mafia.cli import app
+
+    res = CliRunner().invoke(app, ["play", "--run-config", "config/run_local.yaml"])
+    assert "not implemented yet" in res.output and res.exit_code == 1

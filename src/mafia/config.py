@@ -2,6 +2,7 @@ from pathlib import Path
 from typing import Literal, TypeVar
 
 import yaml
+from mafia.types import Phase, Role
 from pydantic import BaseModel, ConfigDict, Field
 
 ROOT = Path(__file__).resolve().parents[2]  # repo root (editable install)
@@ -13,8 +14,8 @@ class Cfg(BaseModel):
 
 class Rules(Cfg):
     players: int
-    roles: dict[str, int]
-    start_phase: str
+    roles: dict[Role, int]
+    start_phase: Phase
     max_day: int
     speech_max_words: int
     last_words_max_words: int

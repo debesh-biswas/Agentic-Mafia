@@ -1,2 +1,2 @@
-You've been voted out. Say your last words (max 20 words).
+You've been voted out. Say your last words (max {last_words_max_words} words).
 Return: {{"message": string, "expression": optional}}

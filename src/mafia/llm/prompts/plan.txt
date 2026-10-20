@@ -1,3 +1,3 @@
 A new game is starting. Your role is {role}.
-Using what you remember, write your plan for this game (max 100 words).
+Using what you remember, write your plan for this game (max {plan_max_words} words).
 Return: {{"plan": string}}

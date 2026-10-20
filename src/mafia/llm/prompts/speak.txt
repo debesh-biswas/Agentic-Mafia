@@ -5,5 +5,5 @@ Your notes: {notes}
 Today so far:
 {today_transcript}
 {reply_line}
-Say something as {name} (max 60 words), or pass.
+Say something as {name} (max {speech_max_words} words), or pass.
 Return: {{"message": string or null, "accuses": [names], "urgency": 0-4, "expression": one of [neutral, happy, laughing, suspicious, defensive, nervous, angry, surprised, thinking]}}

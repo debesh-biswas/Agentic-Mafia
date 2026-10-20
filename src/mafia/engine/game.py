@@ -80,7 +80,7 @@ class Game:
             reply_prompt=self._reply_prompt(agent_id) if speaking else None, retry_error=retry_error)
 
     def _reply_prompt(self, pid: str) -> str | None:
-        return f"{self.name(self._reply[pid])} just accused you. You may reply now, or pass." \
+        return f"{self.name(self._reply[pid])} just accused you. You can respond now or pass." \
             if self._prio and pid in self._reply else None
 
     def _ask(self, pid: str, phase: Phase, method: str, validate, fallback):

@@ -241,7 +241,7 @@ def test_reply_prompt_goes_to_accused_priority_speaker():
 
     for s in range(10):
         mk(s, speak=speak).play()
-    assert prompts and all(p == f"{last} just accused you. You may reply now, or pass." for _, p, last in prompts)
+    assert prompts and all(p == f"{last} just accused you. You can respond now or pass." for _, p, last in prompts)
 
 
 def test_roles_and_vote_order_independent_of_agent_behaviour():

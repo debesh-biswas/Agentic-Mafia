@@ -3,6 +3,6 @@ Public facts so far:
 {public_facts}
 Your notes so far: {notes}
 {role_instruction}
-Rewrite your private notes for this game (max 150 words): suspicions, what to watch, your plan for tomorrow.
+Rewrite your private notes for this game (max {notes_max_words} words): suspicions, what to watch, your plan for tomorrow.
 How urgently do you want to speak early tomorrow? (0 = not at all, 4 = right away)
 Return: {{"notes": string, "urgency": 0-4{target_field}}}

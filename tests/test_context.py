@@ -23,7 +23,7 @@ LB = "LEADERBOARD (after 37 games)\n1. Sana 212 (+13 last game)  2. Dev 205 (+0)
 
 def system_for(p, role, leaderboard=None, memories=""):
     fs, me = starting_summaries(p, PS)
-    return system_message(persona_block(p, PS), rules_primer(SC), role_line(role), fs, me,
+    return system_message(persona_block(p, PS), rules_primer(SC, R), role_line(role), fs, me,
                           "Play it by ear.", leaderboard, memories)
 
 
@@ -32,7 +32,7 @@ class PromptAgent:
 
     def __init__(self, inner, persona):
         self.inner, self.persona, self.agent_id, self.n = inner, persona, inner.agent_id, 0
-        self.prompts = []  # (method, view, system, user)
+        self.sentinels, self.prompts = set(), []  # (method, view, system, user)
 
     def _render(self, method, view, fn):
         self.n += 1
@@ -41,28 +41,30 @@ class PromptAgent:
         return self.n % 4 == 0 and view.retry_error is None  # misbehave on every 4th fresh call
 
     def plan(self, v):
-        self._render("plan", v, user_message_plan)
+        self._render("plan", v, lambda x: user_message_plan(x, R))
         return self.inner.plan(v)
 
     def night(self, v):
-        bad = self._render("night", v, user_message_night)
+        bad = self._render("night", v, lambda x: user_message_night(x, R))
         d = self.inner.night(v)
+        d.notes = f"zq{self.agent_id}x{self.inner.rng.randrange(10**9)}"  # unique sentinel per agent per night
+        self.sentinels.add(d.notes)
         if bad and v.my_role is Role.MAFIA:
             return NightDecision(notes=d.notes, urgency=d.urgency, target=v.me)
         return d
 
     def speak(self, v):
-        bad = self._render("speak", v, user_message_speak)
+        bad = self._render("speak", v, lambda x: user_message_speak(x, R))
         d = self.inner.speak(v)
         return SpeakDecision(message="word " * 80, urgency=1) if bad else d
 
     def vote(self, v):
-        bad = self._render("vote", v, user_message_vote)
+        bad = self._render("vote", v, lambda x: user_message_vote(x, R))
         d = self.inner.vote(v)
         return VoteDecision(vote=v.me) if bad else d
 
     def last_words(self, v):
-        self._render("last_words", v, user_message_last_words)
+        self._render("last_words", v, lambda x: user_message_last_words(x, R))
         return self.inner.last_words(v)
 
 
@@ -91,7 +93,9 @@ def test_rendered_prompts_leak_nothing_over_100_games():
                     assert not re.search(rf"{o}\W{{0,4}}({ROLE_WORDS})|({ROLE_WORDS})\W{{0,4}}{o}", text, re.I), (seed, pid, o)
                 for o in IDS:  # other agents' private notes
                     if o != pid:
-                        assert f"note {o} d" not in text
+                        assert not any(t in text for t in agents[o].sentinels), (seed, pid, o)
+                if roles[pid] is not Role.DOCTOR:
+                    assert "you protected" not in text.lower()
                 if method != "plan":  # own role only ever named in role line / plan; user text has no role words
                     assert not re.search(ROLE_WORDS, user, re.I), user
                 if method != "night" or roles[pid] is Role.VILLAGER:
@@ -111,8 +115,17 @@ def test_word_caps_match_rules():
     assert f"max {R.notes_max_words} words" in seen["night"]
     assert f"max {R.speech_max_words} words" in seen["speak"]
     assert f"max {R.last_words_max_words} words" in seen["last_words"]
-    primer = rules_primer(SC)
-    assert f"at most {R.speech_max_words} words" in primer and f"at most {R.last_words_max_words} words)" in primer
+    assert "at most 60 words" in rules_primer(SC, R) and "reaches day 8" in rules_primer(SC, R)
+
+
+def test_caps_come_from_rules():
+    r = R.model_copy(update=dict(speech_max_words=33, last_words_max_words=7, notes_max_words=99,
+                                 plan_max_words=55, max_day=5))
+    assert "at most 33 words" in rules_primer(SC, r) and "(at most 7 words)" in rules_primer(SC, r)
+    assert "day 5" in rules_primer(SC, r)
+    v = view(phase=Phase.DISCUSSION, today_transcript=[], turns_left_today=1, my_turns_left=1)
+    assert "max 33 words" in user_message_speak(v, r) and "max 99 words" in user_message_night(v, r)
+    assert "max 55 words" in user_message_plan(v, r) and "max 7 words" in user_message_last_words(v, r)
 
 
 def view(**kw):
@@ -143,15 +156,15 @@ def test_system_message_groups_and_persona():
 
 def test_doctor_night_instruction():
     d = view(my_role=Role.DOCTOR, doctor_last_protect="Sana", doctor_cannot_self_protect=True)
-    u = user_message_night(d)
+    u = user_message_night(d, R)
     assert "Last night you protected Sana. You can't protect yourself tonight." in u and '"protect": name' in u
-    first = user_message_night(view(my_role=Role.DOCTOR, day=1, doctor_cannot_self_protect=False))
+    first = user_message_night(view(my_role=Role.DOCTOR, day=1, doctor_cannot_self_protect=False), R)
     assert "protected" not in first and "can't" not in first
 
 
 def test_speak_reply_line_and_retry_error():
     v = view(phase=Phase.DISCUSSION, today_transcript=[], turns_left_today=10, my_turns_left=2,
-             reply_prompt="Tess just accused you. You may reply now, or pass.", retry_error="Your last answer was invalid: x.")
-    u = user_message_speak(v)
+             reply_prompt="Tess just accused you. You can respond now or pass.", retry_error="Your last answer was invalid: x.")
+    u = user_message_speak(v, R)
     assert "Tess just accused you." in u and u.endswith("Your last answer was invalid: x.")
     assert "Turns left today: 10 (yours: 2)" in u

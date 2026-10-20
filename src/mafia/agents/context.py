@@ -1,5 +1,5 @@
 """Prompt assembly (DRD 6.3, 9). Reads only AgentView plus the agent's own game context."""
-from mafia.config import Scoring
+from mafia.config import Rules, Scoring
 from mafia.engine.views import AgentView, TranscriptLine
 from mafia.llm.prompts import template
 from mafia.types import Role
@@ -20,8 +20,13 @@ def scoring_summary(s: Scoring) -> str:
             "Eliminated players still get their team's points.")
 
 
-def rules_primer(s: Scoring) -> str:
-    return template("rules_primer").format(scoring_summary=scoring_summary(s))
+def _caps(r: Rules) -> dict[str, int]:
+    return dict(plan_max_words=r.plan_max_words, notes_max_words=r.notes_max_words,
+                speech_max_words=r.speech_max_words, last_words_max_words=r.last_words_max_words)
+
+
+def rules_primer(s: Scoring, r: Rules) -> str:
+    return template("rules_primer").format(scoring_summary=scoring_summary(s), max_day=r.max_day, **_caps(r))
 
 
 def role_line(role: Role) -> str:
@@ -61,11 +66,11 @@ def _with_retry(text: str, v: AgentView) -> str:
     return f"{text}\n\n{v.retry_error}" if v.retry_error else text
 
 
-def user_message_plan(v: AgentView) -> str:
-    return _with_retry(template("plan").format(role=v.my_role.value.capitalize()), v)
+def user_message_plan(v: AgentView, rules: Rules) -> str:
+    return _with_retry(template("plan").format(role=v.my_role.value.capitalize(), **_caps(rules)), v)
 
 
-def user_message_night(v: AgentView) -> str:
+def user_message_night(v: AgentView, rules: Rules) -> str:
     if v.my_role is Role.MAFIA:
         instr, field = "Choose one player to eliminate tonight (not yourself).", ', "target": name'
     elif v.my_role is Role.DOCTOR:
@@ -77,22 +82,22 @@ def user_message_night(v: AgentView) -> str:
         instr, field = "You have no night action.", ""
     return _with_retry(template("night").format(
         n=v.day, alive=_names(v.alive), dead=_names(v.dead), public_facts=_facts(v),
-        notes=v.my_notes or "(none yet)", role_instruction=instr, target_field=field), v)
+        notes=v.my_notes or "(none yet)", role_instruction=instr, target_field=field, **_caps(rules)), v)
 
 
-def user_message_speak(v: AgentView) -> str:
+def user_message_speak(v: AgentView, rules: Rules) -> str:
     return _with_retry(template("speak").format(
         n=v.day, alive=_names(v.alive), total=v.turns_left_today, mine=v.my_turns_left,
         public_facts=_facts(v), notes=v.my_notes or "(none yet)", today_transcript=_transcript(v),
-        reply_line=v.reply_prompt or "", name=v.me), v)
+        reply_line=v.reply_prompt or "", name=v.me, **_caps(rules)), v)
 
 
-def user_message_vote(v: AgentView) -> str:
+def user_message_vote(v: AgentView, rules: Rules) -> str:
     votes = "; ".join(f"{a} voted {b}" for a, b in v.votes_so_far_today or []) or "none yet"
     return _with_retry(template("vote").format(
         n=v.day, alive=_names(v.alive), public_facts=_facts(v), today_transcript=_transcript(v),
         votes_so_far=votes), v)
 
 
-def user_message_last_words(v: AgentView) -> str:
-    return _with_retry(template("last_words"), v)
+def user_message_last_words(v: AgentView, rules: Rules) -> str:
+    return _with_retry(template("last_words").format(**_caps(rules)), v)

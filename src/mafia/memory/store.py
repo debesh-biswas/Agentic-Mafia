@@ -108,6 +108,16 @@ class MemoryStore:
                 self._db.rollback()
                 raise
 
+    def backup(self, path) -> None:
+        """Consistent copy of the whole DB (crash checkpoint)."""
+        import sqlite3
+        with self._lock:
+            dst = sqlite3.connect(str(path))
+            try:
+                self._db.backup(dst)
+            finally:
+                dst.close()
+
     def close(self) -> None:
         with self._lock:
             self._db.close()

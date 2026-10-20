@@ -4,6 +4,7 @@ import json
 import pytest
 import yaml
 from mafia.agents.llm_agent import LLMAgent
+from mafia.agents.persona import NEUTRAL_SELF, starting_impressions
 from mafia.cli import app
 from mafia.config import ROOT, Memory, Personas, Rules, Scoring, load, load_run
 from mafia.engine.game import Game
@@ -96,6 +97,16 @@ def test_format_error_skips_step_not_season(tmp_path):
     assert specs[0][0] == "fallback" and st.get_summaries() == {}
 
 
+def test_null_role_context_lesson_becomes_any_and_related_excludes_retrieved(tmp_path):
+    st = store(tmp_path)
+    a = st.add("belief", "Sana is quiet", about=["sana"], game=1, importance=5)
+    call = caller([{"questions": ["Is Sana quiet?"]}, insights(ins("Stay calm", kind="lesson", about=[]))])
+    reflect(st, MC, NAMES, call, outcome())
+    assert next(m for m in st.active() if m.text == "Stay calm").role_context == "any"
+    held = call.users[1].split("Beliefs and lessons you already hold")[1]
+    assert f"[m{a}]" in call.users[1].split("Beliefs and lessons you already hold")[0] and f"[m{a}]" not in held
+
+
 def test_summaries_stored_by_id_unknown_dropped(tmp_path):
     st = store(tmp_path)
     call = caller([{"friends": {"Sana": "sharp", "Nobody": "x", "Dev": "me?"}, "self": "I'm loud"}])
@@ -141,7 +152,8 @@ def test_plan_prompt_has_leaderboard_and_memories_from_game2(tmp_path):
         others = [m[0]["content"] for m in llm.sent if not m[-1]["content"].startswith("A new game is starting")]
         assert not any("LEADERBOARD" in o for o in others)  # in-game calls omit it
     assert json.loads(dev.memory.meta_get("applied_lessons")) == [1]
-    assert "Dev" in agents["leo"].memory.get_summaries()["dev"] or "ride-or-die" in agents["leo"].memory.get_summaries()["dev"]
+    leo = next(p for p in P if p.agent_id == "leo")
+    assert agents["leo"].memory.get_summaries() == {**starting_impressions(leo, PC), "self": NEUTRAL_SELF}
 
 
 def run_cfg(tmp_path, group="memory", games=3, rid="mem"):
@@ -196,18 +208,40 @@ def test_control_group_creates_no_memory_and_never_reflects(tmp_path):
 
 
 def test_inspect_cli(tmp_path):
-    import shutil
-    run_season(run_cfg(tmp_path, rid="pytest-inspect-tmp"), mock=True, runs_dir=ROOT / "runs")
-    try:
-        _inspect()
-    finally:
-        shutil.rmtree(ROOT / "runs/pytest-inspect-tmp", ignore_errors=True)
-
-
-def _inspect():
-    r = CliRunner().invoke(app, ["inspect", "--run", "pytest-inspect-tmp", "--agent", "dev"])
+    run_season(run_cfg(tmp_path, rid="pytest-inspect-tmp"), mock=True, runs_dir=tmp_path)
+    inv = lambda *a: CliRunner().invoke(app, ["inspect", "--runs-dir", str(tmp_path), *a])
+    r = inv("--run", "pytest-inspect-tmp", "--agent", "dev")
     assert r.exit_code == 0 and "== " in r.output and "[m" in r.output
-    r = CliRunner().invoke(app, ["inspect", "--run", "pytest-inspect-tmp", "--agent", "dev", "--summaries"])
+    r = inv("--run", "pytest-inspect-tmp", "--agent", "dev", "--summaries")
     assert r.exit_code == 0 and "Sana:" in r.output
-    r = CliRunner().invoke(app, ["inspect", "--run", "pytest-inspect-tmp", "--agent", "dev", "--at-game", "2"])
+    r = inv("--run", "pytest-inspect-tmp", "--agent", "dev", "--at-game", "2")
     assert r.exit_code == 1 and "snapshot" in r.output
+
+
+def dump(d):
+    out = {}
+    for p in sorted((d / "memory").glob("*.sqlite")):
+        st = MemoryStore(p, FakeEmbedder())
+        out[p.stem] = (sorted((m.type, m.text) for m in st.active()), st.get_summaries())
+        st.close()
+    return out
+
+
+def test_crash_in_post_game_resumes_to_same_memory(tmp_path, monkeypatch):
+    run_season(run_cfg(tmp_path, rid="full"), mock=True, runs_dir=tmp_path)
+    orig, n, lock = LLMAgent.post_game, [0], __import__("threading").Lock()
+
+    def boom(self, outcome):
+        r = orig(self, outcome)
+        with lock:
+            n[0] += 1
+            if n[0] == 17:  # game 3, after several agents have written memories
+                raise RuntimeError("boom")
+        return r
+    monkeypatch.setattr(LLMAgent, "post_game", boom)
+    with pytest.raises(RuntimeError):
+        run_season(run_cfg(tmp_path, rid="crash"), mock=True, runs_dir=tmp_path)
+    monkeypatch.setattr(LLMAgent, "post_game", orig)
+    run_season(run_cfg(tmp_path, rid="crash"), mock=True, resume=True, runs_dir=tmp_path)
+    assert dump(tmp_path / "crash") == dump(tmp_path / "full")
+    assert [r["game"] for r in csv.DictReader(open(tmp_path / "crash/games.csv"))] == ["1", "2", "3"]

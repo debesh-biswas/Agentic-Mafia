@@ -132,13 +132,16 @@ def inspect(
     summaries: bool = False,
     superseded: bool = False,
     at_game: int | None = None,
+    runs_dir: str | None = typer.Option(None, hidden=True),
 ):
     """Inspect an agent's memory."""
+    import json
+    from pathlib import Path
     from mafia.config import ROOT, Personas, load
     from mafia.memory.embed import FakeEmbedder
     from mafia.memory.store import MemoryStore
 
-    d = ROOT / "runs" / run
+    d = (Path(runs_dir) if runs_dir else ROOT / "runs") / run
     if at_game is None:
         path = d / "memory" / f"{agent}.sqlite"
     else:
@@ -152,7 +155,8 @@ def inspect(
     if not path.exists():
         typer.echo(f"no memory store for agent {agent!r} in run {run!r} (control group runs have none)")
         raise typer.Exit(1)
-    names = {p.agent_id: p.name for p in load(Personas, ROOT / "config/personas.yaml").personas}
+    pfile = json.loads((d / "manifest.json").read_text())["run_config"]["personas_config"]
+    names = {p.agent_id: p.name for p in load(Personas, pfile).personas}
     st = MemoryStore(path, FakeEmbedder())  # embedder is never used for reading
     try:
         if summaries:

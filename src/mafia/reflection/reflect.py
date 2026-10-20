@@ -72,7 +72,8 @@ def reflect(store, mcfg, names: dict[str, str], call, o: GameOutcomeForAgent) ->
         per_q += [m for m in got if m.id not in {x.id for x in per_q}]
     joined = store.embedder.embed(" ".join(qs))
     cands = sorted(store.active(("belief", "lesson")), key=lambda m: (-float(m.embedding @ joined), m.id))
-    related = cands[:mcfg.related_beliefs_for_reflection]
+    seen = {m.id for m in per_q}
+    related = [m for m in cands if m.id not in seen][:mcfg.related_beliefs_for_reflection]
     for m in per_q + related:
         shown[m.id] = m
     try:
@@ -104,7 +105,7 @@ def reflect(store, mcfg, names: dict[str, str], call, o: GameOutcomeForAgent) ->
             wrote(new, "supersede", ins.text, ins.kind)
             out.append(("memory_supersede", vis, dict(old_id=tid, new_id=new)))
         else:
-            i = store.add(ins.kind, ins.text, about=about, role_context=ins.role_context, cites=cites, **kw)
+            i = store.add(ins.kind, ins.text, about=about, role_context=ins.role_context or ("any" if ins.kind == "lesson" else None), cites=cites, **kw)
             wrote(i, "add", ins.text, ins.kind)
     store.touch([k for k in res.keep_ids if k in shown], game)
     i = store.add("reflection", res.helped_or_hurt, game=game, importance=HELPED_OR_HURT_IMPORTANCE)

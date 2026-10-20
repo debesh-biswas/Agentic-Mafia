@@ -50,6 +50,31 @@ def _default_factory(run, rules, scoring, pcfg, llm, run_dir=None, mock=False):
             for p in pcfg.personas}
 
 
+def _restore_memory(run_dir: Path, last: int) -> None:
+    """DRD 13: memory only reflects completed games. Roll every agent DB back to the checkpoint taken after game
+    `last`; with no completed game the DBs are deleted and reseeded."""
+    import shutil
+    mem = run_dir / "memory"
+    ckpt = mem / "ckpt"
+    if last == 0:
+        for f in mem.glob("*.sqlite"):
+            f.unlink()
+    elif ckpt.exists():
+        for f in ckpt.glob("*.sqlite"):
+            shutil.copy2(f, mem / f.name)
+
+
+def _checkpoint(agents, run_dir: Path) -> None:
+    ckpt = run_dir / "memory" / "ckpt"
+    ckpt.mkdir(parents=True, exist_ok=True)
+    for a, ag in agents.items():
+        if getattr(ag, "memory", None):
+            tmp = ckpt / f"{a}.tmp"
+            tmp.unlink(missing_ok=True)
+            ag.memory.backup(tmp)
+            tmp.replace(ckpt / f"{a}.sqlite")  # only the latest is kept
+
+
 def _park(path: Path) -> None:
     if path.exists():
         path.replace(path.with_suffix(".partial"))  # overwrites an older .partial
@@ -78,6 +103,8 @@ def run_season(run_cfg, *, mock=False, agent_factory=None, on_game=None, resume=
         inner, model = LLMClient(mcfg), {"model": mcfg.model, "provider": (mcfg.provider_pin or {}).get("order")}
     write_manifest(run_dir, run, model, scoring.version)
     agents = {}
+    if run.group == "memory" and not agent_factory:
+        _restore_memory(run_dir, last)
     try:
         agents = agent_factory(run, rules, scoring, pcfg, inner) if agent_factory else \
             _default_factory(run, rules, scoring, pcfg, inner, run_dir, mock)
@@ -115,6 +142,8 @@ def run_season(run_cfg, *, mock=False, agent_factory=None, on_game=None, resume=
                     r.update(memories_active=len(act), beliefs_active=sum(m.type == "belief" for m in act),
                              lessons_active=sum(m.type == "lesson" for m in act))
             compute.append(run_dir / "agents.csv", compute.AGENTS_COLS, arows)
+            if run.group == "memory":
+                _checkpoint(agents, run_dir)
             state_path.write_text(json.dumps({"last_completed": g}))
             if on_game:
                 on_game(game.events, g)

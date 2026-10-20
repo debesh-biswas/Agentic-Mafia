@@ -10,6 +10,7 @@ dependencies = ["pydantic>=2", "pyyaml", "typer", "rich", "openai", "numpy"]
 
 [project.optional-dependencies]
 dev = ["pytest"]
+memory = ["sentence-transformers"]
 
 [project.scripts]
 mafia = "mafia.cli:app"

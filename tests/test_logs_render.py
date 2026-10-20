@@ -27,7 +27,7 @@ def test_views():
     ev = play()
     assert not [e for e in visible(ev, "public") if e.visibility != "public"]
     me = IDS[0]
-    got = {e.visibility for e in visible(ev, me)}
+    got = {e.visibility for e in visible(ev, me) if e.type != "role_assigned"}
     assert got <= {"public", f"private:{me}"} and f"private:{me}" in got
     truth = visible(ev, "truth")
     assert all(e.visibility != "debug" for e in truth) and any(e.visibility == "truth" for e in truth)

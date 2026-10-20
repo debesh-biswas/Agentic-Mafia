@@ -57,7 +57,7 @@ class ReplayLLM(_Sync):
         if row is None:
             raise KeyError(f"no recorded response for (agent={agent_id!r}, call_type={call_type!r}, call_index={i})")
         if "error" not in row and "response" not in row or "error" in row and not {"format", "record"} <= row.keys():
-            raise ValueError(f"malformed recorded row for key {row['key']}: {sorted(row)}")
+            raise LLMError(f"malformed recorded row for key {row['key']}: {sorted(row)}")
         if "error" in row:
             raise (LLMFormatError if row["format"] else LLMError)(row["error"], row["record"])
         return schema.model_validate(row["response"]), row["record"]

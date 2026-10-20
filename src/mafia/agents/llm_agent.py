@@ -15,8 +15,10 @@ class LLMAgent:
         self.persona_text = persona_block(persona, personas)
         self.primer = C.rules_primer(scoring, rules)
         self.friends, self.self_summary = starting_summaries(persona, personas)
+        if group == "memory":
+            raise NotImplementedError("memory group not implemented yet")
         self.pending_records: list[dict] = []
-        self.plan_text, self.notes_history, self.role_line = "", [], ""
+        self.plan_text, self.notes_history, self.role_line = "", {}, ""
 
     def _call(self, call_type, schema, user, view):
         system = C.system_message(self.persona_text, self.primer, self.role_line, self.friends,
@@ -36,14 +38,15 @@ class LLMAgent:
     def plan_accepted(self, text: str) -> None:
         self.plan_text = text
 
+    def notes_accepted(self, day: int, notes: str) -> None:
+        self.notes_history[day] = notes
+
     def plan(self, view):
-        self.role_line, self.plan_text, self.notes_history = C.role_line(view.my_role), "", []
+        self.role_line, self.plan_text, self.notes_history = C.role_line(view.my_role), "", {}
         return self._call("plan", S.PlanDecision, C.user_message_plan(view, self.rules), view)
 
     def night(self, view):
-        d = self._call("night", S.NightDecision, C.user_message_night(view, self.rules), view)
-        self.notes_history.append((view.day, d.notes))
-        return d
+        return self._call("night", S.NightDecision, C.user_message_night(view, self.rules), view)
 
     def speak(self, view):
         return self._call("speak", S.SpeakDecision, C.user_message_speak(view, self.rules), view)

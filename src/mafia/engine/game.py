@@ -187,6 +187,8 @@ class Game:
                 return p.notes, p.urgency, self.fb_rng.choice(legal) if mafia or doc else None
 
             p.notes, p.urgency, choice = self._ask(pid, Phase.NIGHT, "night", validate, fallback)
+            if hasattr(self.agents[pid], "notes_accepted"):
+                self.agents[pid].notes_accepted(st.day, p.notes)
             self.emit("night_notes", f"private:{pid}", pid, notes=p.notes, urgency=p.urgency)
             if choice:
                 self.emit("night_action", f"private:{pid}", pid, [choice], action="target" if mafia else "protect")

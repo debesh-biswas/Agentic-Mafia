@@ -51,6 +51,9 @@ def play(run_config: str = O, games: int = 1, view: str = "public", mock: bool =
     from mafia.renderers.text import TextRenderer
 
     run = load_run(run_config)
+    if run.group == "memory":
+        typer.echo("memory group not implemented yet")
+        raise typer.Exit(1)
     rules, scoring = load(Rules, run.rules_config), load(Scoring, run.scoring_config)
     pcfg = load(Personas, run.personas_config)
     personas = pcfg.personas

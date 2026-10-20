@@ -41,5 +41,5 @@ def test_cli_play_parses():
 
     from mafia.cli import app
 
-    res = CliRunner().invoke(app, ["play", "--run-config", "config/run_local.yaml"])
-    assert "not implemented yet" in res.output and res.exit_code == 1
+    res = CliRunner().invoke(app, ["play", "--run-config", "config/run_local.yaml", "--view", "bogus"])
+    assert "unknown view" in res.output and res.exit_code == 1  # rejected before any client is built

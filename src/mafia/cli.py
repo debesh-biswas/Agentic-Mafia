@@ -40,9 +40,36 @@ def sim(games: int = 200000, seed: int = 1, save_run: str | None = None):
 
 
 @app.command()
-def play(run_config: str = O, games: int = 1, view: str = "public"):
+def play(run_config: str = O, games: int = 1, view: str = "public", mock: bool = typer.Option(False, hidden=True)):
     """Play games with a run config."""
-    _todo()
+    from mafia.agents.llm_agent import LLMAgent
+    from mafia.config import ROOT, ModelCfg, Personas, Rules, Scoring, load, load_run
+    from mafia.engine.game import Game
+    from mafia.llm.client import LLMClient
+    from mafia.llm.recorder import RecordingLLM, ScriptedLLM
+    from mafia.logs.events import EventLog
+    from mafia.renderers.text import TextRenderer
+
+    run = load_run(run_config)
+    rules, scoring = load(Rules, run.rules_config), load(Scoring, run.scoring_config)
+    pcfg = load(Personas, run.personas_config)
+    personas = pcfg.personas
+    names = {p.agent_id: p.name for p in personas}
+    if view not in {"public", "truth", *names}:
+        typer.echo(f"unknown view {view!r}; use public, truth or one of: {', '.join(names)}")
+        raise typer.Exit(1)
+    inner = ScriptedLLM(run.seed, names) if mock else LLMClient(load(ModelCfg, run.model_file))
+    agents = {p.agent_id: LLMAgent(p, pcfg, inner, rules, scoring, run.group) for p in personas}
+    run_dir = ROOT / "runs" / run.run_id
+    for i in range(games):
+        llm = RecordingLLM(inner, run_dir / "llm_cache" / f"{i + 1:04d}.jsonl") if run.record_llm_responses else inner
+        for a in agents.values():
+            a.llm = llm
+        g = Game(rules, sorted(personas, key=lambda p: p.seat), agents, run.run_id, i, run.seed, run.group,
+                 scoring.version, run.prompt_version)
+        g.play()
+        EventLog(run_dir, i).write(g.events)
+        TextRenderer(names).render_game(g.events, view)
 
 
 @app.command()

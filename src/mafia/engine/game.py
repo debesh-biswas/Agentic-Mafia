@@ -91,7 +91,11 @@ class Game:
             view = self.view_for(pid, phase, retry_error=err and
                                  f"Your last answer was invalid: {err}. Answer again with valid JSON.")
             try:
-                return validate(getattr(self.agents[pid], method)(view), attempt == 1)
+                try:
+                    dec = getattr(self.agents[pid], method)(view)
+                finally:
+                    self._drain(pid)
+                return validate(dec, attempt == 1)
             except (Invalid, ValidationError, ValueError, TypeError) as e:  # bad agent output; engine bugs propagate
                 err, why = str(e) or type(e).__name__, f"{type(e).__name__}: {e}"
             except LLMFormatError as e:
@@ -100,6 +104,11 @@ class Game:
         chosen = fallback()
         self.emit("fallback", "debug", pid, call_type=method, reason=why, chosen=str(chosen))
         return chosen
+
+    def _drain(self, pid: str) -> None:
+        """Optional agent hook: LLM call records become llm_call debug events."""
+        for rec in getattr(self.agents[pid], "drain_records", lambda: [])():
+            self.emit("llm_call", "debug", pid, **rec)
 
     def _cap(self, text: str, cap: int, final: bool, pid: str, method: str) -> str:
         """Sanitize, then enforce the word cap: error first time, truncate (logged) on the retry."""
@@ -152,6 +161,8 @@ class Game:
             plan = self._ask(pid, Phase.PLAN, "plan",
                              lambda d, f, pid=pid: self._cap(d.plan, self.rules.plan_max_words, f, pid, "plan"),
                              lambda: "")
+            if hasattr(self.agents[pid], "plan_accepted"):
+                self.agents[pid].plan_accepted(plan)
             self.emit("plan", f"private:{pid}", pid, plan=plan)
 
     def run_night(self) -> None:

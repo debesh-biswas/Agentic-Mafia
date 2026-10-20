@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import threading
 
 import numpy as np
 
@@ -16,17 +17,19 @@ class Embedder:
         self.model_name = model_name
         self._model = None
         self._cache: dict[str, np.ndarray] = {}
+        self._lock = threading.Lock()  # one embedder may be shared by several stores/threads
 
     def embed(self, text: str) -> np.ndarray:
         k = _key(text)
-        if k not in self._cache:
-            if self._model is None:
-                from sentence_transformers import SentenceTransformer  # optional extra: pip install -e ".[memory]"
+        with self._lock:
+            if k not in self._cache:
+                if self._model is None:
+                    from sentence_transformers import SentenceTransformer  # optional extra: pip install -e ".[memory]"
 
-                self._model = SentenceTransformer(self.model_name)
-            v = np.asarray(self._model.encode(text, normalize_embeddings=True), dtype=np.float32)
-            self._cache[k] = v / (np.linalg.norm(v) or 1.0)
-        return self._cache[k]
+                    self._model = SentenceTransformer(self.model_name)
+                v = np.asarray(self._model.encode(text, normalize_embeddings=True), dtype=np.float32)
+                self._cache[k] = v / (np.linalg.norm(v) or 1.0)
+            return self._cache[k]
 
 
 class FakeEmbedder:

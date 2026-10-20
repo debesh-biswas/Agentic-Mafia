@@ -1,5 +1,6 @@
 import threading
 
+import numpy as np
 import pytest
 
 from mafia.config import Retrieval
@@ -24,7 +25,7 @@ def test_insert_get_roundtrip(store):
     i = add(store, "Dev is quiet", about=["dev"], confidence="hunch", cites=[3])
     m = store.get(i)
     assert (m.text, m.about, m.cites, m.status, m.game_created) == ("Dev is quiet", ["dev"], [3], "active", 1)
-    assert m.embedding.shape == (384,)
+    assert m.embedding.shape == (384,) and m.embedding.dtype == np.float32
 
 
 def test_ranking_matches_hand_computation(store):
@@ -59,8 +60,7 @@ def test_update_writes_version(store):
     store.update(i, "v2", "certain", 7, 4)
     m = store.get(i)
     assert (m.text, m.confidence, m.importance, m.game_updated) == ("v2", "certain", 7, 4)
-    row = store._db.execute("SELECT * FROM memory_versions").fetchone()
-    assert (row["memory_id"], row["game"], row["old_text"], row["old_confidence"]) == (i, 4, "v1", "hunch")
+    assert store.versions(i) == [(4, "v1", "hunch")]
 
 
 def _lesson(store, text, applied, wins):
@@ -138,3 +138,28 @@ def test_concurrent_access(store):
     [t.start() for t in ts]
     [t.join() for t in ts]
     assert not errs and len(store.active()) == 60
+
+
+def test_supersede_atomic_on_failure(store, monkeypatch):
+    old = add(store, "Dev is town")
+    n = len(store.active())
+    real = store._db
+
+    class Boom:
+        def __getattr__(self, a):
+            return getattr(real, a)
+
+        def execute(self, sql, *args):
+            if sql.startswith("UPDATE memories SET status='superseded'"):
+                raise RuntimeError("boom")
+            return real.execute(sql, *args)
+
+    monkeypatch.setattr(store, "_db", Boom())
+    with pytest.raises(RuntimeError):
+        store.supersede(old, "Dev is mafia", game=2)
+    monkeypatch.undo()
+    assert store.get(old).status == "active" and len(store.active()) == n
+
+
+def test_close(store):
+    store.close()

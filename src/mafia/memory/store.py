@@ -88,17 +88,29 @@ class MemoryStore:
     def _emb(self, text: str) -> bytes:
         return np.asarray(self.embedder.embed(text), dtype=np.float32).tobytes()
 
+    def _insert(self, type, text, about, role_context, game, importance, confidence, cites) -> int:
+        """Insert without committing; caller holds the lock."""
+        cur = self._db.execute(
+            "INSERT INTO memories (type,text,about,role_context,game_created,game_updated,importance,confidence,cites,embedding)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (type, text, json.dumps(list(about)), role_context, game, game, importance, confidence,
+             json.dumps(list(cites)), self._emb(text)),
+        )
+        return cur.lastrowid
+
     def add(self, type, text, *, about=(), role_context=None, game, importance, confidence=None, cites=()) -> int:
-        emb = self._emb(text)
         with self._lock:
-            cur = self._db.execute(
-                "INSERT INTO memories (type,text,about,role_context,game_created,game_updated,importance,confidence,cites,embedding)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?)",
-                (type, text, json.dumps(list(about)), role_context, game, game, importance, confidence,
-                 json.dumps(list(cites)), emb),
-            )
-            self._db.commit()
-            return cur.lastrowid
+            try:
+                i = self._insert(type, text, about, role_context, game, importance, confidence, cites)
+                self._db.commit()
+                return i
+            except Exception:
+                self._db.rollback()
+                raise
+
+    def close(self) -> None:
+        with self._lock:
+            self._db.close()
 
     def get(self, id: int) -> Memory:
         with self._lock:
@@ -130,14 +142,17 @@ class MemoryStore:
             self._db.commit()
 
     def supersede(self, old_id, text, *, game, importance=None, confidence=None, cites=()) -> int:
-        """Add a replacement (inheriting type/about/role/importance from the old one) and hide the old."""
-        old = self.get(old_id)
+        """Add a replacement (inheriting type/about/role/importance from the old one) and hide the old, atomically."""
         with self._lock:
-            new_id = self.add(old.type, text, about=old.about, role_context=old.role_context, game=game,
-                              importance=importance or old.importance, confidence=confidence or old.confidence,
-                              cites=cites)
-            self._db.execute("UPDATE memories SET status='superseded', superseded_by=? WHERE id=?", (new_id, old_id))
-            self._db.commit()
+            old = self.get(old_id)
+            try:
+                new_id = self._insert(old.type, text, old.about, old.role_context, game,
+                                      importance or old.importance, confidence or old.confidence, cites)
+                self._db.execute("UPDATE memories SET status='superseded', superseded_by=? WHERE id=?", (new_id, old_id))
+                self._db.commit()
+            except Exception:
+                self._db.rollback()
+                raise
         return new_id
 
     def set_status(self, ids, status) -> None:
@@ -160,6 +175,11 @@ class MemoryStore:
                 "UPDATE memories SET games_applied=games_applied+1, wins_when_applied=wins_when_applied+? WHERE id=?",
                 [(int(won), i) for i in ids])
             self._db.commit()
+
+    def versions(self, id) -> list[tuple[int, str, str | None]]:
+        with self._lock:
+            return [(r["game"], r["old_text"], r["old_confidence"]) for r in self._db.execute(
+                "SELECT game, old_text, old_confidence FROM memory_versions WHERE memory_id=? ORDER BY rowid", (id,))]
 
     def get_summaries(self) -> dict[str, str]:
         with self._lock:

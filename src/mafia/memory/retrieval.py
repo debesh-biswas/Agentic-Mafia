@@ -17,7 +17,7 @@ def _norm(x: np.ndarray) -> np.ndarray:
 
 
 def retrieve(store: MemoryStore, query: str, game: int, cfg, *, k=None, types=None) -> list[Memory]:
-    k = k or cfg.top_k
+    k = k if k is not None else cfg.top_k
     cands = store.active(types)
     if not cands:
         return []
@@ -65,6 +65,7 @@ def render(memories: list[Memory], names: dict[str, str]) -> str:
 
 
 def mark_applied(store: MemoryStore, lesson_ids) -> None:
+    """Overwrites the applied set; call once per game (at game start)."""
     store.meta_set("applied_lessons", json.dumps(sorted(set(lesson_ids))))
 
 

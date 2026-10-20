@@ -13,7 +13,27 @@ def _todo():
 @app.command()
 def sim(games: int = 200000, seed: int = 1):
     """Random-bot balance check."""
-    _todo()
+    import statistics
+    import time
+
+    from mafia.agents.random_agent import random_agents
+    from mafia.config import ROOT, Personas, Rules, load
+    from mafia.engine.game import Game
+
+    rules = load(Rules, ROOT / "config/rules.yaml")
+    personas = load(Personas, ROOT / "config/personas.yaml").personas
+    ids = [p.agent_id for p in sorted(personas, key=lambda p: p.seat)]
+    t0, town, saves, days = time.time(), 0, 0, []
+    for i in range(games):
+        g = Game(rules, personas, {}, "sim", i, seed, "sim", 0, 0, record=False)
+        g.agents = random_agents(g.rng, ids)
+        r = g.play()
+        town += r.winner == "town"
+        saves += r.saves
+        days.append(r.days)
+    typer.echo(f"games={games} town_win={town / games:.3f} mafia_win={1 - town / games:.3f} "
+               f"saves_per_game={saves / games:.2f} median_day={statistics.median(days):g} "
+               f"({time.time() - t0:.0f}s)")
 
 
 @app.command()

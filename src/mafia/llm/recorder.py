@@ -135,6 +135,23 @@ class ScriptedLLM(MockLLM):
                    "urgency": r.randint(0, 4), "expression": "thinking"}
         elif call_type == "vote":
             out = {"vote": r.choice(others)}
+        elif call_type == "reflect" and "Step 1" in user:
+            out = {"questions": ["Who read the room best?", "What would I do differently?"]}
+        elif call_type == "reflect":
+            friends = [n for n in self.names.values() if n != me]
+            held = re.findall(r"\[m(\d+)\]", user.split("Beliefs and lessons you already hold")[-1])
+            who = r.choice(friends)
+            ins = {"text": f"{who} plays the same way each game.", "kind": "belief", "about": [who], "role_context": None, "confidence": "hunch",
+                   "importance": r.randint(3, 9), "cites": [], "action": "add", "target_id": None}
+            if held and r.random() < 0.5:
+                ins |= {"action": r.choice(["update", "supersede"]), "target_id": int(r.choice(held))}
+            if r.random() < 0.5:
+                ins |= {"kind": "lesson", "about": [], "role_context": "any", "text": "Stay calm and vote on evidence."}
+            out = {"insights": [ins], "keep_ids": [], "helped_or_hurt": "My read of others helped a little.",
+                   "game_summary": f"Game summary {r.randint(0, 99)}.", "summary_importance": r.randint(2, 8)}
+        elif call_type == "summaries":
+            out = {"friends": {n: f"{n} seems steady." for n in re.findall(r"^- (\w+):", user, re.M)},
+                   "self": "I come across as careful."}
         else:
             out = {"message": "Good luck everyone.", "expression": "neutral"}
         return json.dumps(out)

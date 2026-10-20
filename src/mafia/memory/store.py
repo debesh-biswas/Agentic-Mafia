@@ -119,11 +119,11 @@ class MemoryStore:
             raise KeyError(id)
         return _row(r)
 
-    def active(self, types=None) -> list[Memory]:
-        q, args = "SELECT * FROM memories WHERE status='active'", []
+    def active(self, types=None, status="active") -> list[Memory]:
+        q, args = "SELECT * FROM memories WHERE status=?", [status]
         if types:
             q += f" AND type IN ({','.join('?' * len(types))})"
-            args = list(types)
+            args += list(types)
         with self._lock:
             return [_row(r) for r in self._db.execute(q + " ORDER BY id", args)]
 

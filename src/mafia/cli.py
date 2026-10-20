@@ -56,9 +56,6 @@ def play(run_config: str = O, games: int = 1, view: str = "public", resume: bool
     from mafia.renderers.text import TextRenderer
 
     run = load_run(run_config)
-    if run.group == "memory":
-        typer.echo("memory group not implemented yet")
-        raise typer.Exit(1)
     names = {p.agent_id: p.name for p in load(Personas, run.personas_config).personas}
     if view not in {"public", "truth", *names}:
         typer.echo(f"unknown view {view!r}; use public, truth or one of: {', '.join(names)}")
@@ -137,7 +134,52 @@ def inspect(
     at_game: int | None = None,
 ):
     """Inspect an agent's memory."""
-    _todo()
+    from mafia.config import ROOT, Personas, load
+    from mafia.memory.embed import FakeEmbedder
+    from mafia.memory.store import MemoryStore
+
+    d = ROOT / "runs" / run
+    if at_game is None:
+        path = d / "memory" / f"{agent}.sqlite"
+    else:
+        snaps = sorted((int(p.name[1:]), p) for p in (d / "memory_snapshots").glob("g[0-9]*")
+                       if int(p.name[1:]) <= at_game and (p / f"{agent}.sqlite").exists())
+        if not snaps:
+            typer.echo(f"no memory snapshot at or before game {at_game} for run {run!r}; snapshots are written every "
+                       "snapshot_memory_every games")
+            raise typer.Exit(1)
+        path = snaps[-1][1] / f"{agent}.sqlite"
+    if not path.exists():
+        typer.echo(f"no memory store for agent {agent!r} in run {run!r} (control group runs have none)")
+        raise typer.Exit(1)
+    names = {p.agent_id: p.name for p in load(Personas, ROOT / "config/personas.yaml").personas}
+    st = MemoryStore(path, FakeEmbedder())  # embedder is never used for reading
+    try:
+        if summaries:
+            for k, t in sorted(st.get_summaries().items()):
+                typer.echo(f"{names.get(k, k)}: {t}")
+            return
+        if superseded:
+            rows = st.active(status="superseded")
+        else:
+            types = [t for t, on in (("belief", beliefs), ("lesson", lessons), ("episodic", episodic)) if on]
+            rows = st.active(types or None)
+        for t in dict.fromkeys(m.type for m in rows):
+            typer.echo(f"== {t} ==")
+            for m in (m for m in rows if m.type == t):
+                about = ",".join(names.get(a, a) for a in m.about)
+                extra = f" about={about}" if about else ""
+                extra += f" role={m.role_context}" if m.role_context else ""
+                extra += f" conf={m.confidence}" if m.confidence else ""
+                if m.type == "lesson":
+                    extra += f" won {m.wins_when_applied}/{m.games_applied}"
+                if m.superseded_by:
+                    extra += f" -> m{m.superseded_by}"
+                typer.echo(f"[m{m.id}] g{m.game_created}-{m.game_updated} imp={m.importance}{extra}: {m.text}")
+                for g, old, _ in st.versions(m.id):
+                    typer.echo(f"    (before game {g}: {old})")
+    finally:
+        st.close()
 
 
 @app.command()

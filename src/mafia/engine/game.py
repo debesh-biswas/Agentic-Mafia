@@ -55,7 +55,7 @@ class Game:
 
     # ---- plumbing -------------------------------------------------------------------------
     def emit(self, type: str, visibility: str, actor: str | None = None, targets: list[str] | None = None,
-             **payload) -> None:
+             /, **payload) -> None:
         """The single place events leave the engine."""
         if self.events is None:
             return

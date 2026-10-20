@@ -37,12 +37,20 @@ def persona_block(p: Persona, ps: Personas) -> str:
     )
 
 
-def starting_summaries(p: Persona, ps: Personas) -> tuple[str, str]:
-    """(friend_summaries text, self summary) at game 1: personality-only impressions, plus the private line for the closest friend."""
-    lines = []
+def starting_impressions(p: Persona, ps: Personas) -> dict[str, str]:
+    """agent_id -> personality-only impression at game 1, plus the private line for the closest friend."""
+    out = {}
     for f in friends(p, ps):
-        text = ps.group_impressions[f.agent_id]
+        out[f.agent_id] = ps.group_impressions[f.agent_id]
         if f.agent_id == p.closest_friend and p.private_line_about_closest:
-            text += " " + p.private_line_about_closest
-        lines.append(f"- {f.name}: {text}")
-    return "\n".join(lines), NEUTRAL_SELF
+            out[f.agent_id] += " " + p.private_line_about_closest
+    return out
+
+
+def friend_lines(p: Persona, ps: Personas, by_id: dict[str, str]) -> str:
+    return "\n".join(f"- {f.name}: {by_id[f.agent_id]}" for f in friends(p, ps))
+
+
+def starting_summaries(p: Persona, ps: Personas) -> tuple[str, str]:
+    """(friend_summaries text, self summary) at game 1."""
+    return friend_lines(p, ps, starting_impressions(p, ps)), NEUTRAL_SELF

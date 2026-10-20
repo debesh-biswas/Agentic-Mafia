@@ -1,29 +1,53 @@
 """DRD 13: season runner. `mafia play` and `mafia season` share this one game loop."""
 import json
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from mafia.config import ROOT, ModelCfg, Personas, Rules, Run, Scoring, load, load_run
+from mafia.config import ROOT, Memory, ModelCfg, Personas, Rules, Run, Scoring, load, load_run
 from mafia.engine.game import Game
 from mafia.engine.seeds import game_seed
 from mafia.llm.recorder import RecordingLLM, ScriptedLLM
 from mafia.logs.events import EventLog
 from mafia.logs.manifest import write_manifest
 from mafia.metrics import compute
+from mafia.reflection.reflect import build_outcome
+from mafia.scoring import leaderboard
 from mafia.scoring.score import score
+from mafia.types import Phase
 
 
 class RunExists(Exception):
     pass
 
 
-def after_game_memory(run, agents, events, points, game_no) -> None:
-    """Memory-group hooks (leaderboard event, post_game, deep reflect, compress, snapshot). No-op until step 7."""
+def after_game_memory(game, agents, points, history, names) -> None:
+    """Memory group, after the score event: leaderboard + concurrent post_game for all agents, then their events
+    in seat order (DRD 8.1, 13). history includes this game's points."""
+    game.st.phase = Phase.REFLECT
+    text, ids = leaderboard.render(history, names), list(game.st.players)  # seat order
+    outs = [build_outcome(game.events, a, points, names, text, game.st.game_index + 1) for a in ids]
+    with ThreadPoolExecutor(len(ids)) as ex:
+        results = list(ex.map(lambda ao: agents[ao[0]].post_game(ao[1]), zip(ids, outs)))
+    standings = leaderboard.standings(history)
+    for a, specs in zip(ids, results):
+        game.emit("leaderboard", f"private:{a}", a, standings=standings, text=text)
+        for type, vis, payload in specs:
+            game.emit(type, vis, a, None, **payload)
 
 
-def _default_factory(run, rules, scoring, pcfg, llm):
+def _default_factory(run, rules, scoring, pcfg, llm, run_dir=None, mock=False):
     from mafia.agents.llm_agent import LLMAgent
-    return {p.agent_id: LLMAgent(p, pcfg, llm, rules, scoring, run.group) for p in pcfg.personas}
+    if run.group != "memory":
+        return {p.agent_id: LLMAgent(p, pcfg, llm, rules, scoring, run.group) for p in pcfg.personas}
+    from mafia.memory.embed import Embedder, FakeEmbedder
+    from mafia.memory.store import MemoryStore
+    mcfg = load(Memory, run.memory_config)
+    emb = FakeEmbedder() if mock else Embedder(mcfg.embedding_model)  # one shared, thread-safe embedder
+    (run_dir / "memory").mkdir(parents=True, exist_ok=True)
+    return {p.agent_id: LLMAgent(p, pcfg, llm, rules, scoring, run.group,
+                                 MemoryStore(run_dir / "memory" / f"{p.agent_id}.sqlite", emb), mcfg)
+            for p in pcfg.personas}
 
 
 def _park(path: Path) -> None:
@@ -53,8 +77,14 @@ def run_season(run_cfg, *, mock=False, agent_factory=None, on_game=None, resume=
         mcfg = load(ModelCfg, run.model_file)
         inner, model = LLMClient(mcfg), {"model": mcfg.model, "provider": (mcfg.provider_pin or {}).get("order")}
     write_manifest(run_dir, run, model, scoring.version)
+    agents = {}
     try:
-        agents = (agent_factory or _default_factory)(run, rules, scoring, pcfg, inner)
+        agents = agent_factory(run, rules, scoring, pcfg, inner) if agent_factory else \
+            _default_factory(run, rules, scoring, pcfg, inner, run_dir, mock)
+        names = {p.agent_id: p.name for p in personas}
+        history = []  # per-game points, for the leaderboard; rebuilt from logs on resume
+        if run.group == "memory":
+            history = [next(e.payload["points"] for e in EventLog(run_dir, i).read() if e.type == "score") for i in range(last)]
         for g in range(last + 1, total + 1):
             _park(EventLog(run_dir, g - 1).path)  # a log without state.json is a crashed game
             llm = inner
@@ -65,18 +95,26 @@ def run_season(run_cfg, *, mock=False, agent_factory=None, on_game=None, resume=
             for a in agents.values():
                 if hasattr(a, "llm"):
                     a.llm = llm
+                if hasattr(a, "begin_game"):
+                    a.begin_game(g, leaderboard.render(history, names) if history else "")
             t0 = time.monotonic()
             game = Game(rules, personas, agents, run.run_id, g - 1, run.seed, run.group, scoring.version, run.prompt_version)
             game.play()
             seconds = time.monotonic() - t0
             points = score(game.events, scoring)
             game.emit("score", "public", points=points)
+            if run.group == "memory":
+                history.append(points)
+                after_game_memory(game, agents, points, history, names)
             EventLog(run_dir, g - 1).write(game.events)
             grow, arows = compute.rows(game.events, scoring, run.run_id, run.group, g, game_seed(run.seed, g - 1), seconds)
             compute.append(run_dir / "games.csv", compute.GAMES_COLS, [grow])
+            for r in arows:
+                if getattr(agents[r["agent"]], "memory", None):
+                    act = agents[r["agent"]].memory.active()
+                    r.update(memories_active=len(act), beliefs_active=sum(m.type == "belief" for m in act),
+                             lessons_active=sum(m.type == "lesson" for m in act))
             compute.append(run_dir / "agents.csv", compute.AGENTS_COLS, arows)
-            if run.group == "memory":
-                after_game_memory(run, agents, game.events, points, g)
             state_path.write_text(json.dumps({"last_completed": g}))
             if on_game:
                 on_game(game.events, g)
@@ -84,4 +122,7 @@ def run_season(run_cfg, *, mock=False, agent_factory=None, on_game=None, resume=
     finally:
         if hasattr(inner, "close"):
             inner.close()
+        for a in agents.values():
+            if getattr(a, "memory", None):
+                a.memory.close()
     return run_dir

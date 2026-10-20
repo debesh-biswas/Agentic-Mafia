@@ -78,8 +78,8 @@ def test_llm_call_events_never_reach_prompts():
     assert not any("llm_call" in m["content"] or "prompt_hash" in m["content"] for ms in llm.sent for m in ms)
 
 
-def test_memory_group_refused():
-    with pytest.raises(NotImplementedError):
+def test_memory_group_needs_store():
+    with pytest.raises(ValueError):
         LLMAgent(P[0], PC, None, R, S, "memory")
 
 
@@ -96,9 +96,5 @@ def test_cli_play_mock(tmp_path):
         res = CliRunner().invoke(app, ["play", "--run-config", str(f), "--games", "1", "--mock"])
         assert res.exit_code == 0 and "NIGHT 1" in res.output
         assert (ROOT / "runs/pytest-cli-tmp/games/0001.jsonl").exists()
-        cfg["group"] = "memory"
-        f.write_text(yaml.safe_dump(cfg))
-        res = CliRunner().invoke(app, ["play", "--run-config", str(f), "--mock"])
-        assert res.exit_code == 1 and "memory group not implemented" in res.output
     finally:
         shutil.rmtree(ROOT / "runs/pytest-cli-tmp", ignore_errors=True)

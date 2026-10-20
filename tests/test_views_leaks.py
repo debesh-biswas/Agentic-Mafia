@@ -14,8 +14,7 @@ OWN_ONLY = {"my_role", "doctor_last_protect", "doctor_cannot_self_protect"}
 
 
 def spied_game(seed):
-    g = Game(R, P, {}, "t", 0, seed, "test", 0, 0)
-    g.agents = random_agents(g.rng, IDS)
+    g = Game(R, P, random_agents(R, seed, 0, IDS), "t", 0, seed, "test", 0, 0)
     seen = []  # (agent_id, view)
     for a in g.agents.values():
         for m in ("plan", "night", "speak", "vote", "last_words"):

@@ -25,9 +25,8 @@ def sim(games: int = 200000, seed: int = 1):
     ids = [p.agent_id for p in sorted(personas, key=lambda p: p.seat)]
     t0, town, saves, days = time.time(), 0, 0, []
     for i in range(games):
-        g = Game(rules, personas, {}, "sim", i, seed, "sim", 0, 0, record=False)
-        g.agents = random_agents(g.rng, ids)
-        r = g.play()
+        r = Game(rules, personas, random_agents(rules, seed, i, ids), "sim", i, seed, "sim", 0, 0,
+                 record=False).play()
         town += r.winner == "town"
         saves += r.saves
         days.append(r.days)

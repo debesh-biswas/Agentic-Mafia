@@ -2,6 +2,8 @@ import random
 from dataclasses import dataclass
 from datetime import datetime
 
+from pydantic import ValidationError
+
 from mafia.config import Persona, Rules
 from mafia.engine import rules as R
 from mafia.engine.sanitize import enforce_cap, sanitize, self_leak, word_count
@@ -31,13 +33,14 @@ class Game:
     def __init__(self, rules: Rules, personas: list[Persona], agents: dict, run_id: str, game_index: int,
                  run_seed: int, group: str, scoring_version: int, prompt_version: int, record: bool = True):
         self.rules, self.agents, self.group = rules, agents, group
-        self.rng = rng_for(run_seed, game_index)  # roles, vote order, tie-breaks, fallbacks
+        self.run_seed = run_seed
+        self.fb_rng = rng_for(run_seed, game_index, "fallback")
         self.versions = (scoring_version, prompt_version)
         self.events: list[Event] | None = [] if record else None
         self._seq = 0
         ps = sorted(personas, key=lambda p: p.seat)
         roles = [r for r, n in rules.roles.items() for _ in range(n)]
-        self._roles = roles  # shuffled in play(), after agents may have drawn from self.rng
+        self._roles = roles
         self.st = GameState(run_id, game_index, game_seed(run_seed, game_index),
                             {p.agent_id: PlayerState(p.agent_id, p.name, p.seat, Role.VILLAGER) for p in ps})
         self._by_name = {p.name.lower(): p.agent_id for p in ps}
@@ -59,6 +62,9 @@ class Game:
             day=self.st.day, phase=self.st.phase.value, type=type, actor=actor, targets=targets or [],
             visibility=visibility, payload=payload, scoring_version=self.versions[0],
             prompt_version=self.versions[1]))
+
+    def stream(self, purpose: str):
+        return rng_for(self.run_seed, self.st.game_index, purpose)
 
     def name(self, pid: str) -> str:
         return self.st.players[pid].name
@@ -84,7 +90,7 @@ class Game:
                                  f"Your last answer was invalid: {err}. Answer again with valid JSON.")
             try:
                 return validate(getattr(self.agents[pid], method)(view), attempt == 1)
-            except Exception as e:  # invalid or unparseable answer
+            except (Invalid, ValidationError, ValueError, TypeError) as e:  # bad agent output; engine bugs propagate
                 err = str(e) or type(e).__name__
         chosen = fallback()
         self.emit("fallback", "debug", pid, call_type=method, reason=err, chosen=str(chosen))
@@ -109,7 +115,7 @@ class Game:
     # ---- phases ---------------------------------------------------------------------------
     def play(self) -> GameResult:
         st, rules = self.st, self.rules
-        self.rng.shuffle(self._roles)
+        self.stream("roles").shuffle(self._roles)
         for p, r in zip(st.players.values(), self._roles):
             p.role = r
         self.emit("game_start", "truth", seed=st.seed, group=self.group,
@@ -162,7 +168,7 @@ class Game:
                 return notes, min(max(d.urgency, rules.urgency_min), rules.urgency_max), choice
 
             def fallback(legal=legal, mafia=mafia, doc=doc):
-                return p.notes, p.urgency, self.rng.choice(legal) if mafia or doc else None
+                return p.notes, p.urgency, self.fb_rng.choice(legal) if mafia or doc else None
 
             p.notes, p.urgency, choice = self._ask(pid, Phase.NIGHT, "night", validate, fallback)
             self.emit("night_notes", f"private:{pid}", pid, notes=p.notes, urgency=p.urgency)
@@ -192,7 +198,7 @@ class Game:
         st.phase = Phase.DISCUSSION
         st.today_transcript, self._reply = [], {}
         alive = R.living(st.players)
-        self._sched = s = DiscussionScheduler(alive, {p: st.players[p].urgency for p in alive}, rules, self.rng)
+        self._sched = s = DiscussionScheduler(alive, {p: st.players[p].urgency for p in alive}, rules, self.stream(f"sched{st.day}"))
         while nxt := s.next_speaker():
             pid, prio = nxt
             self._prio = prio
@@ -234,13 +240,13 @@ class Game:
         st, rules = self.st, self.rules
         st.phase = Phase.VOTE
         order = R.living(st.players)
-        self.rng.shuffle(order)
+        self.stream(f"votes{st.day}").shuffle(order)
         self._votes_today = []
         for i, pid in enumerate(order):
             legal = R.vote_targets(st.players, pid)
             tgt = self._ask(pid, Phase.VOTE, "vote",
                             lambda d, f, legal=legal: self._id(d.vote, legal, "vote"),
-                            lambda legal=legal: self.rng.choice(legal))
+                            lambda legal=legal: self.fb_rng.choice(legal))
             self._votes_today.append((pid, tgt))
             self.emit("vote", "public", pid, [tgt], order_index=i)
         counts, out = R.tally(self._votes_today)

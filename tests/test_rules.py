@@ -14,8 +14,7 @@ IDS = [p.agent_id for p in sorted(P, key=lambda p: p.seat)]
 
 def mk(seed=1, **over):
     """A game of RandomAgents; `over` maps method name -> fn(game, agent, view) replacing it on every agent."""
-    g = Game(R, P, {}, "t", 0, seed, "test", 0, 0)
-    g.agents = random_agents(g.rng, IDS)
+    g = Game(R, P, random_agents(R, seed, 0, IDS), "t", 0, seed, "test", 0, 0)
     for meth, fn in over.items():
         for a in g.agents.values():
             setattr(a, meth, lambda v, a=a, fn=fn: fn(g, a, v))
@@ -243,3 +242,11 @@ def test_reply_prompt_goes_to_accused_priority_speaker():
     for s in range(10):
         mk(s, speak=speak).play()
     assert prompts and all(p == f"{last} just accused you. You may reply now, or pass." for _, p, last in prompts)
+
+
+def test_roles_and_vote_order_independent_of_agent_behaviour():
+    a, b = mk(21, night=quiet_night, vote=cyclic_vote), mk(21, night=quiet_night)
+    a.play(), b.play()
+    roles = lambda g: {e.actor: e.payload["role"] for e in ev(g, "role_assigned")}
+    order1 = lambda g: [e.actor for e in ev(g, "vote") if e.day == 1]
+    assert roles(a) == roles(b) and order1(a) == order1(b) and len(order1(a)) == 7

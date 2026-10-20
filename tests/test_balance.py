@@ -11,7 +11,5 @@ def test_random_play_town_win_rate():
     """20k games: binomial SE = 0.0035, so 4 SE = 0.014 around the 0.393 reference."""
     n, town = 20_000, 0
     for i in range(n):
-        g = Game(R, P, {}, "t", i, 7, "test", 0, 0, record=False)
-        g.agents = random_agents(g.rng, IDS)
-        town += g.play().winner == "town"
+        town += Game(R, P, random_agents(R, 7, i, IDS), "t", i, 7, "test", 0, 0, record=False).play().winner == "town"
     assert abs(town / n - 0.393) < 0.014

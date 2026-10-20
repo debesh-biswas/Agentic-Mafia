@@ -1,0 +1,8 @@
+VOTING, DAY {n}. Alive: {alive}.
+Public facts:
+{public_facts}
+Today's discussion:
+{today_transcript}
+Votes so far: {votes_so_far}
+Vote to eliminate one living player other than yourself.
+Return: {{"vote": name}}

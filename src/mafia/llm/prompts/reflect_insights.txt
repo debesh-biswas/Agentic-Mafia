@@ -1,0 +1,14 @@
+Your questions: {questions}
+Memories that come to mind (cite by id):
+{retrieved_for_questions}
+Beliefs and lessons you already hold (cite by id):
+{related_beliefs}
+{update_style_line} {self_insight_line}
+Step 2:
+- Write up to 5 insights. Each is a belief about a friend or yourself, a lesson for a role, or a general reflection. Cite the memory ids it rests on.
+- For each insight, choose an action: "add" (new), "update" (change an existing one; give target_id), or "supersede" (replace an existing one that turned out wrong or outdated; give target_id).
+- List the ids of existing beliefs you keep unchanged.
+- Did your beliefs about others and yourself help you win or lose this game? Answer in 1-2 sentences.
+- Write a short summary of this game for your memory (max 80 words).
+- Rate each insight's and the summary's importance from 1 (trivial) to 10 (crucial).
+Return: {{"insights": [{{"text", "kind": "belief|lesson|reflection", "about": [names or "self"], "role_context": "mafia|doctor|villager|any|null", "confidence": "hunch|fairly sure|certain", "importance": 1-10, "cites": [ids], "action": "add|update|supersede", "target_id": id or null}}], "keep_ids": [ids], "helped_or_hurt": string, "game_summary": string, "summary_importance": 1-10}}

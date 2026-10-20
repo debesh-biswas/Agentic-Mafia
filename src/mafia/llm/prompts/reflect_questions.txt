@@ -1,0 +1,7 @@
+The game is over. {outcome_line}. Roles were: {all_roles}.
+You were {my_role}. Your points this game: {points_breakdown}.
+{leaderboard_block}
+Your notes from this game, night by night:
+{notes_history}
+Step 1: What are the 3 most important questions to ask yourself about this game?
+Return: {{"questions": [string, string, string]}}

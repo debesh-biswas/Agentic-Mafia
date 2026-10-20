@@ -1,0 +1,18 @@
+{persona_block}
+
+RULES
+{rules_primer}
+
+{role_line}
+
+YOUR FRIENDS (your own impressions)
+{friend_summaries}
+YOURSELF (your own impression)
+{self_summary}
+YOUR PLAN FOR THIS GAME
+{game_plan}
+{leaderboard_block}
+MEMORIES THAT COME TO MIND
+{retrieved_memories}
+
+Always answer with JSON only, matching the requested fields.

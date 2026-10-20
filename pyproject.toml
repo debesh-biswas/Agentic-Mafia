@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mafia"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = ["pydantic>=2", "pyyaml", "typer", "rich", "openai", "numpy"]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+memory = ["sentence-transformers"]
+
+[project.scripts]
+mafia = "mafia.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.setuptools.package-data]
+"mafia.llm" = ["prompts/*.txt"]

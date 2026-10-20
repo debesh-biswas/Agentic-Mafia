@@ -100,8 +100,9 @@ def test_format_error_skips_step_not_season(tmp_path):
 def test_null_role_context_lesson_becomes_any_and_related_excludes_retrieved(tmp_path):
     st = store(tmp_path)
     a = st.add("belief", "Sana is quiet", about=["sana"], game=1, importance=5)
-    call = caller([{"questions": ["Is Sana quiet?"]}, insights(ins("Stay calm", kind="lesson", about=[]))])
+    call = caller([{"questions": ["Is Sana quiet?"]}, insights(ins("Stay calm", kind="lesson", about=[]), ins("Mira is calm"))])
     reflect(st, MC, NAMES, call, outcome())
+    assert next(m for m in st.active() if m.text == "Mira is calm").role_context is None
     assert next(m for m in st.active() if m.text == "Stay calm").role_context == "any"
     held = call.users[1].split("Beliefs and lessons you already hold")[1]
     assert f"[m{a}]" in call.users[1].split("Beliefs and lessons you already hold")[0] and f"[m{a}]" not in held
@@ -245,3 +246,33 @@ def test_crash_in_post_game_resumes_to_same_memory(tmp_path, monkeypatch):
     run_season(run_cfg(tmp_path, rid="crash"), mock=True, resume=True, runs_dir=tmp_path)
     assert dump(tmp_path / "crash") == dump(tmp_path / "full")
     assert [r["game"] for r in csv.DictReader(open(tmp_path / "crash/games.csv"))] == ["1", "2", "3"]
+
+
+def test_crash_after_checkpoint_before_state_restores_previous_generation(tmp_path, monkeypatch):
+    import mafia.runner.season as SE
+    run_season(run_cfg(tmp_path, rid="full"), mock=True, runs_dir=tmp_path)
+    monkeypatch.setattr(SE, "_prune_ckpt", lambda *a: None)  # keep g0002 and g0003 around
+    run_season(run_cfg(tmp_path, rid="crash"), mock=True, runs_dir=tmp_path)
+    monkeypatch.undo()
+    d = tmp_path / "crash"
+    assert (d / "memory/ckpt/g0002").exists() and (d / "memory/ckpt/g0003").exists()
+    (d / "state.json").write_text(json.dumps({"last_completed": 2}))  # crash between rename and state write
+    (d / "memory/ckpt/g0004.tmp").mkdir()
+    (d / "memory/dev.sqlite-journal").write_text("junk")
+    run_season(run_cfg(tmp_path, rid="crash"), mock=True, resume=True, runs_dir=tmp_path)
+    assert dump(d) == dump(tmp_path / "full")
+    assert [p.name for p in (d / "memory/ckpt").iterdir()] == ["g0003"] and not (d / "memory/dev.sqlite-journal").exists()
+
+
+def test_missing_checkpoint_generation_is_a_clear_error(tmp_path):
+    import shutil
+
+    from mafia.runner.season import CheckpointMissing
+    run_season(run_cfg(tmp_path, games=2), mock=True, runs_dir=tmp_path)
+    d = tmp_path / "mem"
+    (d / "memory/ckpt/g0002/leo.sqlite").unlink()
+    with pytest.raises(CheckpointMissing, match="leo"):
+        run_season(run_cfg(tmp_path, games=3), mock=True, resume=True, runs_dir=tmp_path)
+    shutil.rmtree(d / "memory/ckpt")
+    with pytest.raises(CheckpointMissing):
+        run_season(run_cfg(tmp_path, games=3), mock=True, resume=True, runs_dir=tmp_path)

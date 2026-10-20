@@ -50,29 +50,62 @@ def _default_factory(run, rules, scoring, pcfg, llm, run_dir=None, mock=False):
             for p in pcfg.personas}
 
 
-def _restore_memory(run_dir: Path, last: int) -> None:
-    """DRD 13: memory only reflects completed games. Roll every agent DB back to the checkpoint taken after game
-    `last`; with no completed game the DBs are deleted and reseeded."""
+class CheckpointMissing(RunExists):
+    pass
+
+
+def _drop_db(path: Path) -> None:
+    for suffix in ("", "-journal", "-wal", "-shm"):
+        Path(str(path) + suffix).unlink(missing_ok=True)
+
+
+def _prune_ckpt(ckpt: Path, keep: int) -> None:
+    """Remove leftover .tmp dirs and every generation except `keep`."""
+    import shutil
+    for d in ckpt.glob("g*"):
+        if d.name != f"g{keep:04d}":
+            shutil.rmtree(d, ignore_errors=True)
+
+
+def _restore_memory(run_dir: Path, last: int, ids) -> None:
+    """DRD 13: memory only reflects completed games. Roll every agent DB back to checkpoint generation `last`;
+    with no completed game the DBs are deleted and reseeded."""
+    import os
     import shutil
     mem = run_dir / "memory"
     ckpt = mem / "ckpt"
     if last == 0:
-        for f in mem.glob("*.sqlite"):
+        for f in mem.glob("*.sqlite*"):
             f.unlink()
-    elif ckpt.exists():
-        for f in ckpt.glob("*.sqlite"):
-            shutil.copy2(f, mem / f.name)
+        shutil.rmtree(ckpt, ignore_errors=True)
+        return
+    gen = ckpt / f"g{last:04d}"
+    missing = [a for a in ids if not (gen / f"{a}.sqlite").exists()]
+    if missing:
+        raise CheckpointMissing(f"memory checkpoint {gen} is missing or incomplete ({', '.join(missing) or 'all'}); "
+                                "cannot resume this run safely")
+    mem.mkdir(parents=True, exist_ok=True)
+    for a in ids:
+        db = mem / f"{a}.sqlite"
+        _drop_db(db)
+        tmp = mem / f"{a}.restore"
+        shutil.copy2(gen / f"{a}.sqlite", tmp)
+        os.replace(tmp, db)
+    _prune_ckpt(ckpt, last)
 
 
-def _checkpoint(agents, run_dir: Path) -> None:
+def _checkpoint(agents, run_dir: Path, g: int) -> None:
+    """Back up every agent DB into ckpt/g<g>.tmp, then rename the directory (atomic). Call before state.json."""
     ckpt = run_dir / "memory" / "ckpt"
-    ckpt.mkdir(parents=True, exist_ok=True)
+    tmp = ckpt / f"g{g:04d}.tmp"
+    import shutil
+    shutil.rmtree(tmp, ignore_errors=True)
+    tmp.mkdir(parents=True)
     for a, ag in agents.items():
-        if getattr(ag, "memory", None):
-            tmp = ckpt / f"{a}.tmp"
-            tmp.unlink(missing_ok=True)
-            ag.memory.backup(tmp)
-            tmp.replace(ckpt / f"{a}.sqlite")  # only the latest is kept
+        ag.memory.backup(tmp / f"{a}.sqlite")
+    final = ckpt / f"g{g:04d}"
+    shutil.rmtree(final, ignore_errors=True)
+    tmp.rename(final)
 
 
 def _park(path: Path) -> None:
@@ -82,6 +115,8 @@ def _park(path: Path) -> None:
 
 def run_season(run_cfg, *, mock=False, agent_factory=None, on_game=None, resume=False, games=None,
                runs_dir: Path = ROOT / "runs"):
+    """Run (or resume) a season. Memory-group crash safety (per-game DB checkpoints, restore on resume) applies only
+    to the default agent factory; a custom agent_factory manages its own state."""
     run: Run = load_run(run_cfg) if isinstance(run_cfg, (str, Path)) else run_cfg
     total = games or run.games
     rules, scoring = load(Rules, run.rules_config), load(Scoring, run.scoring_config)
@@ -103,8 +138,9 @@ def run_season(run_cfg, *, mock=False, agent_factory=None, on_game=None, resume=
         inner, model = LLMClient(mcfg), {"model": mcfg.model, "provider": (mcfg.provider_pin or {}).get("order")}
     write_manifest(run_dir, run, model, scoring.version)
     agents = {}
-    if run.group == "memory" and not agent_factory:
-        _restore_memory(run_dir, last)
+    ckpt_memory = run.group == "memory" and not agent_factory
+    if ckpt_memory:
+        _restore_memory(run_dir, last, [p.agent_id for p in personas])
     try:
         agents = agent_factory(run, rules, scoring, pcfg, inner) if agent_factory else \
             _default_factory(run, rules, scoring, pcfg, inner, run_dir, mock)
@@ -142,9 +178,11 @@ def run_season(run_cfg, *, mock=False, agent_factory=None, on_game=None, resume=
                     r.update(memories_active=len(act), beliefs_active=sum(m.type == "belief" for m in act),
                              lessons_active=sum(m.type == "lesson" for m in act))
             compute.append(run_dir / "agents.csv", compute.AGENTS_COLS, arows)
-            if run.group == "memory":
-                _checkpoint(agents, run_dir)
+            if ckpt_memory:
+                _checkpoint(agents, run_dir, g)
             state_path.write_text(json.dumps({"last_completed": g}))
+            if ckpt_memory:
+                _prune_ckpt(run_dir / "memory" / "ckpt", g)
             if on_game:
                 on_game(game.events, g)
         write_manifest(run_dir, run, model, scoring.version, ended=True)

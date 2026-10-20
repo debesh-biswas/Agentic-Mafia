@@ -15,6 +15,6 @@ reasoning:
   deep_reflect: medium
   compress: low
 temperature: 0.8
-max_output_tokens: {default: 600, reflect: 1500, summaries: 1200}
+max_output_tokens: {default: 2000, reflect: 3000, summaries: 1500}   # gpt-oss reasoning counts against this; 600 truncated votes/nights
 timeout_s: 180
 max_concurrency: 1

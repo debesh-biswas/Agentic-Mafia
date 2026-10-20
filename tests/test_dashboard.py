@@ -68,3 +68,8 @@ def test_control_game_page_has_no_reflection(tmp_path):
     d = season(tmp_path, "config/run_local.yaml", 1)
     page = write_dashboard(d) and (d / "games/0001.html").read_text()
     assert "Day 1 — discussion" in page and "what each player thought" not in page
+
+
+def test_esc_accepts_numbers():
+    from mafia.renderers.dashboard import esc
+    assert esc(3) == "3" and esc("<b>") == "&lt;b&gt;"

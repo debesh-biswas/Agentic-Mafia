@@ -4,13 +4,19 @@ import json
 import os
 import sqlite3
 from datetime import datetime
-from html import escape as esc
+from html import escape
 from pathlib import Path
 
 import yaml
 
 from mafia.logs.events import EventLog
 from mafia.renderers.text import visible
+
+
+def esc(x) -> str:
+    """html.escape for any payload value (event payloads mix text and numbers)."""
+    return escape(str(x))
+
 
 BLOCK = 5
 REASON = {"parity": "parity", "mafia_eliminated": "mafia voted out", "day_limit": "day limit"}

@@ -39,10 +39,10 @@ def sim(games: int = 200000, seed: int = 1, save_run: str | None = None):
                f"({time.time() - t0:.0f}s)")
 
 
-def _run(run_config, resume, mock, games=None, on_game=None):
+def _run(run_config, resume, mock, games=None, on_game=None, dashboard_every=None):
     from mafia.runner.season import RunExists, run_season
     try:
-        run_season(run_config, mock=mock, resume=resume, games=games, on_game=on_game)
+        run_season(run_config, mock=mock, resume=resume, games=games, on_game=on_game, dashboard_every=dashboard_every)
     except RunExists as e:
         typer.echo(str(e))
         raise typer.Exit(1)
@@ -64,9 +64,25 @@ def play(run_config: str = O, games: int = 1, view: str = "public", resume: bool
 
 
 @app.command()
-def season(run_config: str = O, resume: bool = False, mock: bool = typer.Option(False, hidden=True)):
-    """Run a full season."""
-    _run(run_config, resume, mock)
+def season(run_config: str = O, resume: bool = False, dashboard_every: int = 5,
+           mock: bool = typer.Option(False, hidden=True)):
+    """Run a full season; refreshes runs/<id>/dashboard.html every N games (0 = off)."""
+    _run(run_config, resume, mock, dashboard_every=dashboard_every)
+
+
+@app.command()
+def dashboard(run: str = O, runs_dir: str | None = typer.Option(None, hidden=True)):
+    """Rebuild a run's live dashboard page and print its path."""
+    from pathlib import Path
+
+    from mafia.config import ROOT
+    from mafia.renderers.dashboard import write_dashboard
+
+    d = (Path(runs_dir) if runs_dir else ROOT / "runs") / run
+    if not (d / "manifest.json").exists():
+        typer.echo(f"no manifest for run {run!r}")
+        raise typer.Exit(1)
+    typer.echo(str(write_dashboard(d)))
 
 
 @app.command()

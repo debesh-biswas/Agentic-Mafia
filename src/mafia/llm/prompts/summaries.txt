@@ -1,0 +1,5 @@
+Based on everything you remember, write your current impression of each friend and of yourself, a few sentences each (max 60 words each). Include how they play Mafia if you have noticed anything.
+Previous impressions:
+{current_summaries}
+{update_style_line} {self_insight_line}
+Return: {{"friends": {{name: string}}, "self": string}}

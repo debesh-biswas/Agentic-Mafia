@@ -1,0 +1,13 @@
+Mafia is a hidden-role game for 7 players: 1 Mafia, 1 Doctor and 5 Villagers. The Doctor and the Villagers are the Town. Roles are secret: you know only your own.
+
+The game alternates between night and day, starting with night 1.
+- Night: the Mafia secretly chooses one player to eliminate. The Doctor secretly chooses one player to protect. If the Mafia chooses the protected player, nobody is eliminated. The Doctor may protect themselves, but never two nights in a row.
+- Morning: the narrator announces who was eliminated, or that nobody was. It never says who was protected.
+- Day: players talk. Each message is at most 60 words, and you may pass. Then everyone votes, one at a time and in the open, for one living player other than themselves. The player with the most votes is eliminated and says last words (at most 20 words). If votes are tied, nobody is eliminated.
+- Eliminated players' roles stay secret until the game ends. Eliminated players watch silently.
+
+The Town wins when the Mafia is voted out. The Mafia wins when only 2 players remain. If the game reaches day 8, the Town wins. When the game ends, all roles are revealed.
+
+Points: {scoring_summary}
+
+Players may say anything, true or false.

@@ -106,3 +106,46 @@ def report(runs: list[str] = O):
 def scene(run: str = O, game: int = O, out: str = O):
     """Export a scene script (stub)."""
     _todo()
+
+
+_CHECKS = [  # (schema, call_type, tiny prompt)
+    ("PlanDecision", "plan", "It is the start of day 1. Write your short plan for the game."),
+    ("NightDecision", "night", "Night 1. You are a villager. Living players: Ann, Bo, Cy. Write notes, an urgency 0-4; no target."),
+    ("SpeakDecision", "speak", "Day 1 discussion. Living: Ann, Bo, Cy. Say something short, or null, with urgency 0-4."),
+    ("VoteDecision", "vote", "Vote now. Living: Bo, Cy. Pick one name to eliminate."),
+    ("LastWordsDecision", "last_words", "You were eliminated. Say your last words in under 20 words."),
+    ("Questions", "reflect", "The game is over. Ask 1-3 questions to reflect on."),
+    ("ReflectInsights", "reflect", "The game is over. Give 1 insight (kind lesson), keep_ids [], helped_or_hurt, game_summary and summary_importance."),
+    ("Summaries", "summaries", "Summarize what you think of your friends Bo and Cy (one sentence each) and of yourself."),
+    ("DeepReflect", "deep_reflect", "Give 1 insight (kind lesson) about your play across several games."),
+    ("Compressed", "compress", "Merge these memories into one summary with an importance 1-10: 'Bo lied once.' 'Bo lied twice.'"),
+]
+
+
+@app.command(hidden=True)
+def llm_check(model_config: str = O, model: str | None = None):
+    """Send one tiny call per decision schema to the configured endpoint; exit 1 if any fail."""
+    import json
+    import time
+
+    from mafia.config import ModelCfg, load
+    from mafia.llm import schemas
+    from mafia.llm.client import LLMClient
+
+    cfg = load(ModelCfg, model_config)
+    if model:
+        cfg.model = model
+    client, failed = LLMClient(cfg), 0
+    for name, call_type, prompt in _CHECKS:
+        schema = getattr(schemas, name)
+        t0 = time.monotonic()
+        try:
+            _, rec = client.call(call_type, "You are Ann, playing a game of Mafia. Reply with JSON only.",
+                                 f"{prompt}\nReturn JSON matching: {json.dumps(schema.model_json_schema())}",
+                                 schema, "ann")
+            status, retries = "PASS", rec["format_errors"]
+        except Exception as e:  # any failure is a FAIL line, not a crash
+            status, retries = f"FAIL ({type(e).__name__}: {str(e)[:120]})", getattr(e, "record", {}).get("format_errors", "-")
+            failed += 1
+        typer.echo(f"{name:18} {status}  {time.monotonic() - t0:.1f}s  format_retries={retries}")
+    raise typer.Exit(1 if failed else 0)

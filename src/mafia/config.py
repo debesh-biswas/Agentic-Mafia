@@ -100,8 +100,8 @@ class Persona(Cfg):
     play_style: str
     update_style: str
     self_insight: str
-    closest_friend: str
-    private_line_about_closest: str
+    closest_friend: str | None
+    private_line_about_closest: str | None
     appearance: dict
 
 

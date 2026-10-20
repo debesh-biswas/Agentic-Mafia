@@ -71,7 +71,14 @@ def replay(run: str = O, game: int = O, view: str = "public"):
     from mafia.renderers.text import TextRenderer
 
     names = {p.agent_id: p.name for p in load(Personas, ROOT / "config/personas.yaml").personas}
-    TextRenderer(names).render_game(EventLog(ROOT / "runs" / run, game - 1).read(), view)
+    if view not in {"public", "truth", *names}:
+        typer.echo(f"unknown view {view!r}; use public, truth or one of: {', '.join(names)}")
+        raise typer.Exit(1)
+    log = EventLog(ROOT / "runs" / run, game - 1)
+    if not log.path.exists():
+        typer.echo(f"no such game log: {log.path}")
+        raise typer.Exit(1)
+    TextRenderer(names).render_game(log.read(), view)
 
 
 @app.command()

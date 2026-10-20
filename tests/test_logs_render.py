@@ -38,3 +38,22 @@ def test_render_uses_names(capsys):
     TextRenderer({p.agent_id: p.name for p in PERSONAS}).render_game(ev, "truth")
     out = capsys.readouterr().out
     assert "NIGHT 1" in out and "Roles:" in out and "eliminated" in out
+
+
+def test_filters_synthetic():
+    ev = play()
+    base = ev[0]
+    a, b = IDS[0], IDS[1]
+    extra = [base.model_copy(update={"type": "fallback", "visibility": "debug", "actor": a}),
+             base.model_copy(update={"type": "plan", "visibility": f"private:{b}", "actor": b})]
+    ev = ev + extra
+    for view in ("public", "truth", a):
+        assert not [e for e in visible(ev, view) if e.visibility == "debug"]
+    assert not [e for e in visible(ev, a) if e.visibility == f"private:{b}"]
+    assert [e for e in visible(ev, "truth") if e.visibility == f"private:{b}"]
+
+
+def test_agent_sees_only_own_role():
+    roles = [e for e in visible(play(), IDS[0]) if e.type == "role_assigned"]
+    assert [e.actor for e in roles] == [IDS[0]]
+    assert not [e for e in visible(play(), "public") if e.type == "role_assigned"]

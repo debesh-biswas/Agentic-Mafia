@@ -10,7 +10,8 @@ def visible(events: Iterable[Event], view: str) -> list[Event]:
     if view == "truth":
         return [e for e in events if e.visibility != "debug"]
     ok = {"public", f"private:{view}"} if view != "public" else {"public"}
-    return [e for e in events if e.visibility in ok]
+    return [e for e in events if e.visibility in ok
+            or (e.type == "role_assigned" and e.actor == view)]  # an agent knows its own role
 
 
 class TextRenderer:
@@ -67,8 +68,8 @@ class TextRenderer:
                 votes.append(f"{self.n(e.actor)}→{self.n(e.targets[0])}")
             elif e.type == "vote_result":
                 res = "tie, nobody voted out" if e.payload["tie"] else f"{self.n(e.payload['eliminated'])} voted out"
-                out(f"Votes: {', '.join(votes)}. {res}.")
+                out(f"Votes: {', '.join(votes)}. {res}.", soft_wrap=True)
                 votes = []
             elif (r := self.line(e)):
                 text, private = r
-                out(text, style="dim" if private else None, markup=False)
+                out(text, style="dim" if private else None, markup=False, soft_wrap=True)

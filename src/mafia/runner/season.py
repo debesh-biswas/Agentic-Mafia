@@ -108,6 +108,14 @@ def _checkpoint(agents, run_dir: Path, g: int) -> None:
     tmp.rename(final)
 
 
+def _snapshot(run_dir: Path, g: int) -> None:
+    """Keep a permanent copy of checkpoint generation g (never pruned); inspect --at-game reads these."""
+    import shutil
+    dst = run_dir / "memory_snapshots" / f"g{g:04d}"
+    shutil.rmtree(dst, ignore_errors=True)
+    shutil.copytree(run_dir / "memory" / "ckpt" / f"g{g:04d}", dst)
+
+
 def _park(path: Path) -> None:
     if path.exists():
         path.replace(path.with_suffix(".partial"))  # overwrites an older .partial
@@ -180,6 +188,8 @@ def run_season(run_cfg, *, mock=False, agent_factory=None, on_game=None, resume=
             compute.append(run_dir / "agents.csv", compute.AGENTS_COLS, arows)
             if ckpt_memory:
                 _checkpoint(agents, run_dir, g)
+                if g % run.snapshot_memory_every == 0:
+                    _snapshot(run_dir, g)
             state_path.write_text(json.dumps({"last_completed": g}))
             if ckpt_memory:
                 _prune_ckpt(run_dir / "memory" / "ckpt", g)

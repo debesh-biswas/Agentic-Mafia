@@ -149,6 +149,15 @@ class ScriptedLLM(MockLLM):
                 ins |= {"kind": "lesson", "about": [], "role_context": "any", "text": "Stay calm and vote on evidence."}
             out = {"insights": [ins], "keep_ids": [], "helped_or_hurt": "My read of others helped a little.",
                    "game_summary": f"Game summary {r.randint(0, 99)}.", "summary_importance": r.randint(2, 8)}
+        elif call_type == "deep_reflect":
+            held = re.findall(r"\[m(\d+)\]", user)
+            ins = {"text": "I misjudge quiet players.", "kind": "reflection", "about": ["self"], "role_context": None,
+                   "confidence": "hunch", "importance": r.randint(3, 8), "cites": [], "action": "add", "target_id": None}
+            if held and r.random() < 0.5:
+                ins |= {"action": "update", "target_id": int(r.choice(held))}
+            out = {"insights": [ins]}
+        elif call_type == "compress":
+            out = {"summary": "Several games blurred into one: steady play, mixed reads.", "importance": r.randint(2, 8)}
         elif call_type == "summaries":
             out = {"friends": {n: f"{n} seems steady." for n in re.findall(r"^- (\w+):", user, re.M)},
                    "self": "I come across as careful."}

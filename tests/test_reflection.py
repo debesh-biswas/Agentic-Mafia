@@ -276,3 +276,123 @@ def test_missing_checkpoint_generation_is_a_clear_error(tmp_path):
     shutil.rmtree(d / "memory/ckpt")
     with pytest.raises(CheckpointMissing):
         run_season(run_cfg(tmp_path, games=3), mock=True, resume=True, runs_dir=tmp_path)
+
+
+# ---- Task 12: deep reflection, compression, fading, snapshots ----
+from mafia.llm.client import LLMFormatError  # noqa: E402
+from mafia.memory.maintenance import compress, fade  # noqa: E402
+from mafia.memory.retrieval import retrieve  # noqa: E402
+from mafia.reflection.deep import deep_reflect  # noqa: E402
+
+
+def epi_store(tmp_path, games, imp=4):
+    s = store(tmp_path)
+    return s, [s.add("episodic", f"game {g} summary text", game=g, importance=imp + g % 3) for g in games]
+
+
+def test_compress_merges_window_cites_max_importance_and_hides_originals(tmp_path):
+    s, ids = epi_store(tmp_path, [1, 2, 3, 11, 25])  # at game 30: cutoff 20 -> windows 0 (1,2,3) and 1 (11 alone)
+    call = caller([{"summary": "Merged.", "importance": 1}])
+    out, merged = compress(s, MC, NAMES, call, "dev", 30)
+    assert merged == 3 and len(call.users) == 1  # single-memory window and game 25 (too new) untouched
+    new = [m for m in s.active(("episodic",)) if m.text == "Merged."]
+    assert len(new) == 1 and new[0].cites == ids[:3] and new[0].game_created == 30
+    assert new[0].importance == max(s.get(i).importance for i in ids[:3])  # max of the group, not the model's 1
+    assert all(s.get(i).status == "merged" for i in ids[:3]) and s.get(ids[3]).status == "active"
+    assert out == [("memory_write", "private:dev", dict(memory_id=new[0].id, type="episodic", action="add", text="Merged."))]
+    got = {m.id for m in retrieve(s, "game summary", 30, MC.retrieval, k=20)}
+    assert not got & set(ids[:3]) and new[0].id in got
+
+
+def test_compress_skips_window_on_format_error(tmp_path):
+    s, ids = epi_store(tmp_path, [1, 2, 11, 12])
+    bad = {"nope": 1}
+    call = caller([bad, bad, {"summary": "ok", "importance": 3}])  # first window exhausts its retry
+    out, merged = compress(s, MC, NAMES, call, "dev", 40)
+    assert merged == 2 and out[0][0] == "fallback"
+    assert [s.get(i).status for i in ids] == ["active", "active", "merged", "merged"]
+
+
+def test_fading_boundaries(tmp_path):
+    s = store(tmp_path)
+    f = lambda t, g, imp, last=None: (s.add(t, f"m{g}{imp}", game=g, importance=imp), last)
+    cases = {"old_low": f("belief", 10, 3), "too_new": f("belief", 11, 3), "important": f("belief", 1, 4),
+             "retrieved_recently": f("belief", 1, 2, 11), "retrieved_long_ago": f("belief", 1, 2, 10)}
+    for i, last in cases.values():
+        if last:
+            s.touch([i], last)
+    assert fade(s, MC, 30) == 2  # created/retrieved <= 30-20=10 and importance <= 3
+    st = {k: s.get(i).status for k, (i, _) in cases.items()}
+    assert st == {"old_low": "faded", "too_new": "active", "important": "active",
+                  "retrieved_recently": "active", "retrieved_long_ago": "faded"}
+
+
+def test_deep_reflection_uses_shared_apply_and_shown_ids(tmp_path):
+    s = store(tmp_path)
+    e = [s.add("episodic", f"summary {g}", game=g, importance=5) for g in range(1, 8)]
+    h = [s.add("reflection", f"hoh {g}", game=g, importance=6) for g in range(1, 8)]
+    s.meta_set("hoh_ids", json.dumps(h))
+    other = s.add("belief", "unseen belief", about=["sana"], game=1, importance=5)
+    call = caller([{"insights": [ins("I trust too fast", kind="reflection", about=["self"], cites=[e[-1], other]),
+                                 ins("lesson-ish", kind="lesson"),
+                                 ins("rewrite", action="update", target_id=h[-1])]}])
+    out = deep_reflect(s, NAMES, call, "dev", 5)
+    u = call.users[0]
+    assert all(f"[m{i}]" in u for i in e[-5:] + h[-5:]) and f"[m{e[0]}]" not in u and "[m%d]" % other not in u
+    adds = [m for m in s.active(("reflection",)) if m.text == "I trust too fast"]
+    assert adds[0].cites == [e[-1]] and adds[0].about == ["self"]  # unshown cite dropped
+    assert not [m for m in s.active() if m.text == "lesson-ish"]  # lessons not allowed here
+    assert s.get(h[-1]).text == "rewrite" and s.get(other).text == "unseen belief"
+    assert any(t == "memory_write" and p["action"] == "update" for t, _, p in out)
+
+
+def test_hoh_ids_recorded_by_reflect(tmp_path):
+    s = store(tmp_path)
+    call = caller([{"questions": ["q?"]}, insights(), ])
+    out = reflect(s, MC, NAMES, call, outcome())
+    ids = json.loads(s.meta_get("hoh_ids"))
+    assert len(ids) == 1 and s.get(ids[0]).text == "It helped."
+
+
+@pytest.mark.parametrize("g,deep,comp", [(1, 0, 0), (4, 0, 0), (5, 1, 0), (10, 1, 1), (15, 1, 0), (20, 1, 1)])
+def test_cadence_deep_and_compression(tmp_path, g, deep, comp):
+    llm = ScriptedLLM(5, NAMES)
+    ag = mem_agents(tmp_path, llm)["dev"]
+    for k in range(1, g + 1):  # build history so compression has something to merge
+        ag.memory.add("episodic", f"old {k}", game=k, importance=4)
+    specs = ag.post_game(outcome(game=g))
+    cts = [p["call_type"] for t, v, p in specs if t == "llm_call"]
+    assert cts.count("deep_reflect") == deep
+    assert ("memory_maintenance" in [t for t, _, _ in specs]) == bool(comp)
+    assert ("compress" in cts) == (comp and g >= 20)  # nothing older than 10 games before game 20
+
+
+def test_snapshots_written_and_readable_by_inspect(tmp_path):
+    cfg = run_cfg(tmp_path, games=4, rid="snap").model_copy(update={"snapshot_memory_every": 2})
+    run_season(cfg, mock=True, runs_dir=tmp_path)
+    snaps = sorted(p.name for p in (tmp_path / "snap" / "memory_snapshots").iterdir())
+    assert snaps == ["g0002", "g0004"]
+    assert len(list((tmp_path / "snap" / "memory_snapshots" / "g0002").glob("*.sqlite"))) == 7
+    r = CliRunner().invoke(app, ["inspect", "--runs-dir", str(tmp_path), "--run", "snap", "--agent", "dev", "--at-game", "3"])
+    assert r.exit_code == 0 and "[m" in r.output
+
+
+def test_30_game_season_keeps_memory_bounded(tmp_path):
+    cfg = run_cfg(tmp_path, games=30, rid="long").model_copy(update={"snapshot_memory_every": 10})
+    run_season(cfg, mock=True, runs_dir=tmp_path)
+    d = tmp_path / "long"
+    assert sorted(p.name for p in (d / "memory_snapshots").iterdir()) == ["g0010", "g0020", "g0030"]
+    maint = [e for g in range(30) for e in EventLog(d, g).read() if e.type == "memory_maintenance"]
+    assert len(maint) == 3 * 7 and sum(e.payload["merged"] for e in maint) > 0
+    # Derivation. Compression at games 10/20/30 merges episodic memories with game_created <= g-10, so after the
+    # last one (g=30) the uncompressed ones are games 21..30 (10) plus one merged summary per 10-game window
+    # touched (windows 0..2, but each older summary is itself re-merged into its window) -> <= 10 + 3.
+    # Reflections (helped_or_hurt) are one per game and never faded (importance 6): 30. Insights: reflect adds <= 1
+    # per game and deep reflection <= 1 per 5 games: <= 30 + 6.
+    # Total active <= 13 + 30 + 36 = 79 against 30 games * (1 episodic + 1 reflection + 1 insight) = 90+ unbounded.
+    for p in sorted((d / "memory").glob("*.sqlite")):
+        st = MemoryStore(p, FakeEmbedder())
+        act = st.active()
+        assert len([m for m in act if m.type == "episodic"]) <= 13
+        assert len(act) <= 79
+        st.close()

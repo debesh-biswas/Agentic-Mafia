@@ -1,4 +1,5 @@
 """Post-game reflection (DRD 8.1): questions, retrieval, insights, memory writes. Calls 1 and 2."""
+import json
 from dataclasses import dataclass, field
 
 from mafia.llm import schemas as S
@@ -57,6 +58,38 @@ def _fallback(call_type, reason, chosen=None):
     return ("fallback", "debug", dict(call_type=call_type, reason=reason, chosen=chosen))
 
 
+def wrote(vis, i, action, text, type):
+    return ("memory_write", vis, dict(memory_id=i, type=type, action=action, text=text))
+
+
+def apply_insights(store, names, vis, game, insights, shown, out, call_type="reflect") -> None:
+    """DRD 8.1 action semantics, shared with deep reflection. `shown` maps id -> memory for the ids the model was
+    shown; targets and cites outside it are rejected. Appends event specs to `out`."""
+    by_name = {n.lower(): a for a, n in names.items()}
+
+    def w(*a):
+        out.append(wrote(vis, *a))
+
+    for ins in insights:
+        cites = [c for c in ins.cites if c in shown]
+        about = [a for a in (by_name.get(n.lower(), "self" if n.lower() == "self" else None) for n in ins.about) if a]
+        action, tid = ins.action, ins.target_id
+        if action != "add" and not (tid in shown and store.get(tid).status == "active"):
+            out.append(_fallback(call_type, f"invalid target_id {tid} for {action}; treated as add", "add"))
+            action = "add"
+        kw = dict(game=game, importance=ins.importance, confidence=ins.confidence)
+        if action == "update":
+            store.update(tid, ins.text, ins.confidence, ins.importance, game)
+            w(tid, "update", ins.text, store.get(tid).type)
+        elif action == "supersede":
+            new = store.supersede(tid, ins.text, cites=cites, **kw)
+            w(new, "supersede", ins.text, ins.kind)
+            out.append(("memory_supersede", vis, dict(old_id=tid, new_id=new)))
+        else:
+            i = store.add(ins.kind, ins.text, about=about, role_context=ins.role_context or ("any" if ins.kind == "lesson" else None), cites=cites, **kw)
+            w(i, "add", ins.text, ins.kind)
+
+
 def reflect(store, mcfg, names: dict[str, str], call, o: GameOutcomeForAgent) -> list[tuple[str, str, dict]]:
     """call(call_type, schema, user) -> parsed; may raise LLMFormatError. Returns (type, visibility, payload) specs."""
     vis, game, out = f"private:{o.agent_id}", o.game_no, []
@@ -82,34 +115,15 @@ def reflect(store, mcfg, names: dict[str, str], call, o: GameOutcomeForAgent) ->
             related_beliefs=render(related, names) or "(none)", **f))
     except LLMFormatError as e:
         return [_fallback("reflect", f"insights: {e}")]
-    by_name = {n.lower(): a for a, n in names.items()}
     out.append(("reflection", vis, dict(questions=qs, insights=[i.model_dump() for i in res.insights],
                                         helped_or_hurt=res.helped_or_hurt, game_summary=res.game_summary)))
 
-    def wrote(i, action, text, type):
-        out.append(("memory_write", vis, dict(memory_id=i, type=type, action=action, text=text)))
-
-    for ins in res.insights[:mcfg.reflection.max_insights]:
-        cites = [c for c in ins.cites if c in shown]
-        about = [a for a in (by_name.get(n.lower(), "self" if n.lower() == "self" else None) for n in ins.about) if a]
-        action, tid = ins.action, ins.target_id
-        if action != "add" and not (tid in shown and store.get(tid).status == "active"):
-            out.append(_fallback("reflect", f"invalid target_id {tid} for {action}; treated as add", "add"))
-            action = "add"
-        kw = dict(game=game, importance=ins.importance, confidence=ins.confidence)
-        if action == "update":
-            store.update(tid, ins.text, ins.confidence, ins.importance, game)
-            wrote(tid, "update", ins.text, store.get(tid).type)
-        elif action == "supersede":
-            new = store.supersede(tid, ins.text, cites=cites, **kw)
-            wrote(new, "supersede", ins.text, ins.kind)
-            out.append(("memory_supersede", vis, dict(old_id=tid, new_id=new)))
-        else:
-            i = store.add(ins.kind, ins.text, about=about, role_context=ins.role_context or ("any" if ins.kind == "lesson" else None), cites=cites, **kw)
-            wrote(i, "add", ins.text, ins.kind)
+    apply_insights(store, names, vis, game, res.insights[:mcfg.reflection.max_insights], shown, out)
     store.touch([k for k in res.keep_ids if k in shown], game)
     i = store.add("reflection", res.helped_or_hurt, game=game, importance=HELPED_OR_HURT_IMPORTANCE)
-    wrote(i, "add", res.helped_or_hurt, "reflection")
+    hoh = json.loads(store.meta_get("hoh_ids", "[]"))  # lets deep reflection find these (DRD 8.2)
+    store.meta_set("hoh_ids", json.dumps(hoh + [i]))
+    out.append(wrote(vis, i, "add", res.helped_or_hurt, "reflection"))
     i = store.add("episodic", res.game_summary, game=game, importance=res.summary_importance)
-    wrote(i, "add", res.game_summary, "episodic")
+    out.append(wrote(vis, i, "add", res.game_summary, "episodic"))
     return out

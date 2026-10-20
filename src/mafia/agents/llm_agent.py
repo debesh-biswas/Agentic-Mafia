@@ -7,6 +7,8 @@ from mafia.agents.persona import (SELF_INSIGHT, UPDATE_STYLE, friend_lines, pers
 from mafia.llm import schemas as S
 from mafia.llm.client import LLMError
 from mafia.memory.retrieval import mark_applied, render, retrieve, settle_lessons
+from mafia.memory.maintenance import compress, fade
+from mafia.reflection.deep import deep_reflect
 from mafia.reflection.reflect import reflect
 from mafia.reflection.summaries import summarize
 
@@ -108,6 +110,13 @@ class LLMAgent:
             specs = reflect(self.memory, self.memory_cfg, self.names, call, outcome)
             specs += summarize(self.memory, self.names, self.agent_id, call, outcome.game_no,
                                outcome.update_style_line, outcome.self_insight_line)
+            g, mc = outcome.game_no, self.memory_cfg
+            if g % mc.deep_reflection_every_games == 0:
+                specs += deep_reflect(self.memory, self.names, call, self.agent_id, g)
+            if g % mc.compression.every_games == 0:
+                more, merged = compress(self.memory, mc, self.names, call, self.agent_id, g)
+                specs += more + [("memory_maintenance", f"private:{self.agent_id}",
+                                  dict(merged=merged, faded=fade(self.memory, mc, g)))]
         finally:
             settle_lessons(self.memory, outcome.won)
         return specs + [("llm_call", "debug", rec) for rec in self.drain_records()]

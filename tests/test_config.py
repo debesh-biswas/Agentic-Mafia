@@ -10,18 +10,23 @@ C = ROOT / "config"
 
 
 @pytest.mark.parametrize("model,name", [
-    (Rules, "rules"), (ModelCfg, "model_local"), (ModelCfg, "model_openrouter"),
+    (Rules, "rules"), (ModelCfg, "model_local"), 
     (Memory, "memory"), (Scoring, "scoring_v0"), (Personas, "personas"),
 ])
 def test_loads(model, name):
     load(model, C / f"{name}.yaml")
 
 
+def test_openrouter_placeholder_rejected():
+    with pytest.raises(ValidationError, match="placeholder"):
+        load(ModelCfg, C / "model_openrouter.yaml")
+
+
 def test_personas_seven():
     assert len(load(Personas, C / "personas.yaml").personas) == 7
 
 
-@pytest.mark.parametrize("name", ["run_local", "run_calibration", "run_memory", "run_control"])
+@pytest.mark.parametrize("name", ["run_local", "run_local_memory", "run_calibration", "run_memory", "run_control"])
 def test_runs(name):
     r = load_run(C / f"{name}.yaml")
     assert r.rules_config == ROOT / "config/rules.yaml"

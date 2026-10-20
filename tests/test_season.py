@@ -144,3 +144,48 @@ def test_resume_drops_csv_rows_ahead_of_state(tmp_path):
     assert [r["game"] for r in rows(d / "agents.csv")] == ["1"] * 7 + ["2"] * 7
     from mafia.engine.seeds import game_seed
     assert rows(d / "games.csv")[1]["seed"] == str(game_seed(cfg(tmp_path).seed, 1))
+
+
+def test_preflight_missing_key_creates_nothing(monkeypatch, tmp_path):
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    import yaml
+    m = tmp_path / "m.yaml"
+    m.write_text(yaml.safe_dump(yaml.safe_load((ROOT / "config/model_local.yaml").read_text())
+                                | {"api_key_env": "NO_SUCH_KEY_VAR_X"}))
+    c = cfg(tmp_path, 1, "pre").model_copy(update={"model_file": m})
+    with pytest.raises(RuntimeError, match="NO_SUCH_KEY_VAR_X"):
+        run_season(c, agent_factory=factory, runs_dir=tmp_path)
+    assert not (tmp_path / "pre").exists()
+
+
+def test_manifest_provenance_and_resume_refusal(tmp_path, monkeypatch):
+    from mafia.logs import manifest as M
+    run_season(cfg(tmp_path, 1, "prov"), mock=True, agent_factory=factory, runs_dir=tmp_path)
+    d = tmp_path / "prov"
+    man = json.loads((d / "manifest.json").read_text())
+    assert man["prompts_sha256"] == M.prompts_hash() and man["git_dirty"] in (True, False, None)
+    for n in ("run", "model", "scoring", "rules", "personas", "memory"):
+        assert (d / "config" / f"{n}.yaml").exists()
+    assert (d / "config/rules.yaml").read_text() == (ROOT / "config/rules.yaml").read_text()
+    assert not list(d.glob("*.tmp"))
+    run_season(cfg(tmp_path, 2, "prov").model_copy(update={"games": 2}), mock=True, agent_factory=factory,
+               resume=True, runs_dir=tmp_path)  # same inputs: fine
+    (d / "config/rules.yaml").write_text("changed: 1\n")
+    with pytest.raises(M.InputsChanged, match="rules.yaml"):
+        run_season(cfg(tmp_path, 2, "prov"), mock=True, agent_factory=factory, resume=True, runs_dir=tmp_path)
+    (d / "config/rules.yaml").write_text((ROOT / "config/rules.yaml").read_text())
+    man["prompts_sha256"] = "0" * 64
+    (d / "manifest.json").write_text(json.dumps(man))
+    with pytest.raises(M.InputsChanged, match="prompts"):
+        run_season(cfg(tmp_path, 2, "prov"), mock=True, agent_factory=factory, resume=True, runs_dir=tmp_path)
+
+
+def test_llm_call_events_drop_reasoning(tmp_path):
+    class Rec(ScriptedLLM):
+        async def acall(self, *a):
+            out, rec = await super().acall(*a)
+            return out, rec | {"reasoning": "secret thoughts"}
+    run_season(cfg(tmp_path, 1, "rs"), mock=True, runs_dir=tmp_path,
+               agent_factory=lambda run, rules, scoring, pcfg, llm: factory(run, rules, scoring, pcfg, Rec(run.seed, {p.agent_id: p.name for p in pcfg.personas})))
+    text = (tmp_path / "rs/games/0001.jsonl").read_text()
+    assert '"llm_call"' in text and "secret thoughts" not in text

@@ -87,8 +87,9 @@ def test_client_concurrent_calls_respect_semaphore():
         pass
 
     sdk = NS(chat=NS(completions=NS(create=create)), close=close)
-    cfg = load(ModelCfg, ROOT / "config/model_openrouter.yaml")
-    cfg.provider_pin, cfg.max_concurrency = None, 3
+    import yaml
+    cfg = ModelCfg.model_validate(yaml.safe_load((ROOT / "config/model_openrouter.yaml").read_text())
+                                  | {"provider_pin": None, "max_concurrency": 3})
     cl = LLMClient(cfg, sdk)
     outs = []
     ts = [threading.Thread(target=lambda i=i: outs.append(cl.call("vote", "s", "u", VoteDecision, f"a{i}"))) for i in range(10)]

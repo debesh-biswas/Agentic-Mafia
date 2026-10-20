@@ -3,6 +3,7 @@ from types import SimpleNamespace as NS
 import json
 
 import pytest
+import yaml
 from mafia.cli import app
 from mafia.config import ROOT, ModelCfg, load
 from mafia.llm.client import ATTEMPTS, LLMClient, LLMError, LLMFormatError, ProviderMismatch, strip_reasoning
@@ -88,9 +89,8 @@ def resp(content=V, provider=None, finish="stop"):
 
 
 def cfg(name="model_openrouter", **kw):
-    c = load(ModelCfg, ROOT / f"config/{name}.yaml")
-    c.provider_pin = kw.pop("pin", None)
-    return c
+    d = yaml.safe_load((ROOT / f"config/{name}.yaml").read_text()) | {"provider_pin": kw.pop("pin", None)}
+    return ModelCfg.model_validate(d)  # the shipped placeholder pin is rejected by design
 
 
 def client(c, *items):

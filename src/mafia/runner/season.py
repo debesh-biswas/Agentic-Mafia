@@ -1,5 +1,6 @@
 """DRD 13: season runner. `mafia play` and `mafia season` share this one game loop."""
 import json
+import os
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -9,7 +10,7 @@ from mafia.engine.game import Game
 from mafia.engine.seeds import game_seed
 from mafia.llm.recorder import RecordingLLM, ScriptedLLM
 from mafia.logs.events import EventLog
-from mafia.logs.manifest import write_manifest
+from mafia.logs.manifest import snapshot_inputs, write_manifest
 from mafia.metrics import compute
 from mafia.reflection.reflect import build_outcome
 from mafia.scoring import leaderboard
@@ -134,16 +135,20 @@ def run_season(run_cfg, *, mock=False, agent_factory=None, on_game=None, resume=
     if run_dir.exists() and not resume:
         raise RunExists(f"{run_dir} already exists; pass --resume to continue it or delete it first")
     state_path = run_dir / "state.json"
-    last = json.loads(state_path.read_text())["last_completed"] if state_path.exists() else 0
-    run_dir.mkdir(parents=True, exist_ok=True)
-    for f in ("games.csv", "agents.csv"):
-        compute.truncate(run_dir / f, last)
+    # preflight: everything that can fail on the environment, before anything is created
     if mock:
         inner, model = ScriptedLLM(run.seed, {p.agent_id: p.name for p in personas}), {"model": "mock"}
     else:
         from mafia.llm.client import LLMClient
         mcfg = load(ModelCfg, run.model_file)
-        inner, model = LLMClient(mcfg), {"model": mcfg.model, "provider": (mcfg.provider_pin or {}).get("order")}
+        inner, model = LLMClient(mcfg), {"model": mcfg.model, "provider_pin": (mcfg.provider_pin or {}).get("order")}
+        if run.group == "memory" and not agent_factory:
+            import sentence_transformers  # noqa: F401  (optional extra [memory])
+    last = json.loads(state_path.read_text())["last_completed"] if state_path.exists() else 0
+    run_dir.mkdir(parents=True, exist_ok=True)
+    snapshot_inputs(run_dir, run)  # first start: copy configs; resume: refuse if configs/prompts changed
+    for f in ("games.csv", "agents.csv"):
+        compute.truncate(run_dir / f, last)
     write_manifest(run_dir, run, model, scoring.version)
     agents = {}
     ckpt_memory = run.group == "memory" and not agent_factory
@@ -171,12 +176,12 @@ def run_season(run_cfg, *, mock=False, agent_factory=None, on_game=None, resume=
             t0 = time.monotonic()
             game = Game(rules, personas, agents, run.run_id, g - 1, run.seed, run.group, scoring.version, run.prompt_version)
             game.play()
-            seconds = time.monotonic() - t0
             points = score(game.events, scoring)
             game.emit("score", "public", points=points)
             if run.group == "memory":
                 history.append(points)
                 after_game_memory(game, agents, points, history, names)
+            seconds = time.monotonic() - t0
             EventLog(run_dir, g - 1).write(game.events)
             grow, arows = compute.rows(game.events, scoring, run.run_id, run.group, g, game_seed(run.seed, g - 1), seconds)
             compute.append(run_dir / "games.csv", compute.GAMES_COLS, [grow])
@@ -190,7 +195,9 @@ def run_season(run_cfg, *, mock=False, agent_factory=None, on_game=None, resume=
                 _checkpoint(agents, run_dir, g)
                 if g % run.snapshot_memory_every == 0:
                     _snapshot(run_dir, g)
-            state_path.write_text(json.dumps({"last_completed": g}))
+            tmp = state_path.with_suffix(".tmp")
+            tmp.write_text(json.dumps({"last_completed": g}))
+            os.replace(tmp, state_path)
             if ckpt_memory:
                 _prune_ckpt(run_dir / "memory" / "ckpt", g)
             if on_game:

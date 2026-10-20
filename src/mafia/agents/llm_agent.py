@@ -43,7 +43,7 @@ class LLMAgent:
         return C.system_message(self.persona_text, self.primer, self.role_line, self.friends, self.self_summary,
                                 self.plan_text, lb, self.memories_text)
 
-    def _call(self, call_type, schema, user, view=None, leaderboard=False):
+    def _call(self, call_type, schema, user, leaderboard=False):
         try:
             parsed, rec = self.llm.call(call_type, self._system(leaderboard), user, schema, self.agent_id)
         except LLMError as e:
@@ -59,7 +59,7 @@ class LLMAgent:
 
     def drain_records(self) -> list[dict]:
         out, self.pending_records = self.pending_records, []
-        return out
+        return [{k: v for k, v in r.items() if k != "reasoning"} for r in out]  # reasoning stays in llm_cache only
 
     def plan_accepted(self, text: str) -> None:
         self.plan_text = text
@@ -78,21 +78,21 @@ class LLMAgent:
             role = view.my_role.value
             mems = self._recall(f"{role} strategy; {names}")
             mark_applied(self.memory, [m.id for m in mems if m.type == "lesson" and m.role_context in (role, "any")])
-        return self._call("plan", S.PlanDecision, C.user_message_plan(view, self.rules), view, leaderboard=True)
+        return self._call("plan", S.PlanDecision, C.user_message_plan(view, self.rules), leaderboard=True)
 
     def night(self, view):
         if self.group == "memory":
             self._recall(view.my_notes or self.plan_text)
-        return self._call("night", S.NightDecision, C.user_message_night(view, self.rules), view)
+        return self._call("night", S.NightDecision, C.user_message_night(view, self.rules))
 
     def speak(self, view):
-        return self._call("speak", S.SpeakDecision, C.user_message_speak(view, self.rules), view)
+        return self._call("speak", S.SpeakDecision, C.user_message_speak(view, self.rules))
 
     def vote(self, view):
-        return self._call("vote", S.VoteDecision, C.user_message_vote(view, self.rules), view)
+        return self._call("vote", S.VoteDecision, C.user_message_vote(view, self.rules))
 
     def last_words(self, view):
-        return self._call("last_words", S.LastWordsDecision, C.user_message_last_words(view, self.rules), view)
+        return self._call("last_words", S.LastWordsDecision, C.user_message_last_words(view, self.rules))
 
     def post_game(self, outcome) -> list[tuple[str, str, dict]]:
         """Memory group: reflect, update summaries, settle lessons. Returns (type, visibility, payload) event specs

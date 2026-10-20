@@ -56,6 +56,8 @@ class ModelCfg(Cfg):
             raise ValueError(f"reasoning missing call types: {sorted(missing)}")
         if self.provider_pin is not None and not self.provider_pin.get("order"):
             raise ValueError("provider_pin needs a non-empty 'order'")
+        if self.provider_pin and any("<" in str(x) or ">" in str(x) for x in self.provider_pin["order"]):
+            raise ValueError("provider_pin.order still has a placeholder; set the real provider name before running")
         return self
 
 

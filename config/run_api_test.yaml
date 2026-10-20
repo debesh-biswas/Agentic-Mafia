@@ -1,0 +1,12 @@
+run_id: api-test-memory
+group: memory
+games: 30
+model_config: config/model_openrouter.yaml
+scoring_config: config/scoring_v0.yaml
+seed: 20261020
+rules_config: config/rules.yaml
+personas_config: config/personas.yaml
+memory_config: config/memory.yaml
+prompt_version: 1
+record_llm_responses: true
+snapshot_memory_every: 10

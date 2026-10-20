@@ -10,7 +10,7 @@ C = ROOT / "config"
 
 
 @pytest.mark.parametrize("model,name", [
-    (Rules, "rules"), (ModelCfg, "model_local"), 
+    (Rules, "rules"), (ModelCfg, "model_local"), (ModelCfg, "model_openrouter"),
     (Memory, "memory"), (Scoring, "scoring_v0"), (Personas, "personas"),
 ])
 def test_loads(model, name):
@@ -18,15 +18,17 @@ def test_loads(model, name):
 
 
 def test_openrouter_placeholder_rejected():
+    raw = yaml.safe_load((C / "model_openrouter.yaml").read_text())
+    raw["provider_pin"]["order"] = ["<PROVIDER_NAME>"]
     with pytest.raises(ValidationError, match="placeholder"):
-        load(ModelCfg, C / "model_openrouter.yaml")
+        ModelCfg(**raw)
 
 
 def test_personas_seven():
     assert len(load(Personas, C / "personas.yaml").personas) == 7
 
 
-@pytest.mark.parametrize("name", ["run_local", "run_local_memory", "run_calibration", "run_memory", "run_control"])
+@pytest.mark.parametrize("name", ["run_local", "run_local_memory", "run_api_test", "run_calibration", "run_memory", "run_control"])
 def test_runs(name):
     r = load_run(C / f"{name}.yaml")
     assert r.rules_config == ROOT / "config/rules.yaml"

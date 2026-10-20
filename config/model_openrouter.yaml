@@ -3,7 +3,7 @@ base_url: https://openrouter.ai/api/v1
 api_key_env: OPENROUTER_API_KEY
 model: openai/gpt-oss-20b
 provider_pin:                          # sent as the OpenRouter "provider" field
-  order: ["<PROVIDER_NAME>"]           # choose before calibration; never change during a run
+  order: ["DeepInfra"]                 # pinned 2026-10-20; never change during a run
   allow_fallbacks: false
   require_parameters: true
 structured_output: json_schema

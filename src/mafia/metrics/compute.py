@@ -70,9 +70,19 @@ def truncate(path: Path, last_game: int) -> None:
     """Drop rows past last_game (a crash between the CSV append and state.json)."""
     if not path.exists():
         return
+    import os
     with path.open(newline="") as f:
-        rs = list(csv.DictReader(f))
-        cols = rs and list(rs[0]) or None
-    if cols:
-        path.unlink()
-        append(path, cols, [r for r in rs if int(r["game"]) <= last_game])
+        rd = csv.DictReader(f)
+        cols, keep = rd.fieldnames, []
+        for r in rd:
+            try:
+                if int(r["game"]) <= last_game and None not in r and None not in r.values():
+                    keep.append(r)
+            except (TypeError, ValueError):  # malformed (torn) row
+                pass
+    tmp = path.with_suffix(".tmp")
+    with tmp.open("w", newline="") as f:
+        w = csv.DictWriter(f, cols)
+        w.writeheader()
+        w.writerows(keep)
+    os.replace(tmp, path)

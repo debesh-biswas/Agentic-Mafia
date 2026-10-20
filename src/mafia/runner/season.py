@@ -5,6 +5,7 @@ from pathlib import Path
 
 from mafia.config import ROOT, ModelCfg, Personas, Rules, Run, Scoring, load, load_run
 from mafia.engine.game import Game
+from mafia.engine.seeds import game_seed
 from mafia.llm.recorder import RecordingLLM, ScriptedLLM
 from mafia.logs.events import EventLog
 from mafia.logs.manifest import write_manifest
@@ -71,7 +72,7 @@ def run_season(run_cfg, *, mock=False, agent_factory=None, on_game=None, resume=
             points = score(game.events, scoring)
             game.emit("score", "public", points=points)
             EventLog(run_dir, g - 1).write(game.events)
-            grow, arows = compute.rows(game.events, scoring, run.run_id, run.group, g, run.seed, seconds)
+            grow, arows = compute.rows(game.events, scoring, run.run_id, run.group, g, game_seed(run.seed, g - 1), seconds)
             compute.append(run_dir / "games.csv", compute.GAMES_COLS, [grow])
             compute.append(run_dir / "agents.csv", compute.AGENTS_COLS, arows)
             if run.group == "memory":

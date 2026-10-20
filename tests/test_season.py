@@ -126,7 +126,21 @@ def test_play_mock_via_cli(monkeypatch, tmp_path):
     monkeypatch.setattr(S, "ROOT", tmp_path)
     monkeypatch.setattr(S.run_season, "__kwdefaults__", {**S.run_season.__kwdefaults__, "runs_dir": tmp_path / "runs"})
     r = CliRunner().invoke(app, ["play", "--run-config", str(ROOT / "config/run_local.yaml"), "--games", "1", "--mock"])
-    assert r.exit_code == 0 and "Day" in r.output or "day" in r.output
+    assert r.exit_code == 0 and ("Day" in r.output or "day" in r.output)
     assert (tmp_path / "runs/local-test/games.csv").exists()
     r = CliRunner().invoke(app, ["play", "--run-config", str(ROOT / "config/run_local.yaml"), "--mock"])
     assert r.exit_code == 1 and "--resume" in r.output
+
+
+def test_resume_drops_csv_rows_ahead_of_state(tmp_path):
+    Boom.count, Boom.fail_at = 0, None
+    run_season(cfg(tmp_path, 2, "ahead"), mock=True, agent_factory=factory, runs_dir=tmp_path)
+    d = tmp_path / "ahead"
+    (d / "state.json").write_text(json.dumps({"last_completed": 1}))  # game 2 row is ahead of state
+    with (d / "games.csv").open("a") as f:
+        f.write("torn,row")  # crash mid-write
+    run_season(cfg(tmp_path, 2, "ahead"), mock=True, agent_factory=factory, resume=True, runs_dir=tmp_path)
+    assert [r["game"] for r in rows(d / "games.csv")] == ["1", "2"]
+    assert [r["game"] for r in rows(d / "agents.csv")] == ["1"] * 7 + ["2"] * 7
+    from mafia.engine.seeds import game_seed
+    assert rows(d / "games.csv")[1]["seed"] == str(game_seed(cfg(tmp_path).seed, 1))

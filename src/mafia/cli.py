@@ -81,18 +81,25 @@ def calibrate(run: str = O):
 @app.command()
 def score(run: str = O, scoring: str = O):
     """Recompute points for a run from its logs (logs are not modified)."""
+    import json
+
     from mafia.config import ROOT, Personas, Scoring, load
-    from mafia.logs.events import EventLog
+    from mafia.logs.events import Event
     from mafia.scoring import leaderboard
     from mafia.scoring.score import KEYS, score as rescore
 
     cfg = load(Scoring, scoring)
-    names = {p.agent_id: p.name for p in load(Personas, ROOT / "config/personas.yaml").personas}
+    manifest = ROOT / "runs" / run / "manifest.json"
+    if not manifest.exists():
+        typer.echo(f"no manifest for run {run!r}")
+        raise typer.Exit(1)
+    pfile = json.loads(manifest.read_text())["run_config"]["personas_config"]
+    names = {p.agent_id: p.name for p in load(Personas, pfile).personas}
     files = sorted((ROOT / "runs" / run / "games").glob("*.jsonl"))
     if not files:
         typer.echo(f"no game logs for run {run!r}")
         raise typer.Exit(1)
-    per_game = [rescore(EventLog(ROOT / "runs" / run, i).read(), cfg) for i in range(len(files))]
+    per_game = [rescore([Event.model_validate_json(l) for l in f.read_text().splitlines() if l], cfg) for f in files]
     tot = leaderboard.standings(per_game)
     typer.echo(f"{run}: {len(files)} games, scoring v{cfg.version}")
     for a in sorted(tot, key=lambda a: (-tot[a], names[a])):

@@ -201,8 +201,13 @@ def report(runs: list[str] = O, runs_dir: str | None = typer.Option(None, hidden
             typer.echo(f"no games.csv for run {r!r}")
             raise typer.Exit(1)
     names = {p.agent_id: p.name for p in load(Personas, ROOT / "config/personas.yaml").personas}
+    try:
+        loaded = [rep.load(base / r) for r in runs]
+    except ValueError as e:
+        typer.echo(str(e))
+        raise typer.Exit(1)
     out = base / f"report_{datetime.now():%Y%m%d-%H%M%S}.md"
-    out.write_text(rep.build([rep.load(base / r) for r in runs], names))
+    out.write_text(rep.build(loaded, names))
     typer.echo(str(out))
 
 

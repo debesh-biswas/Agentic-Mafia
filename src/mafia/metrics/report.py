@@ -22,13 +22,16 @@ def f(x):
 def load(d: Path) -> dict:
     rd = lambda n: list(csv.DictReader((d / n).open(newline="")))
     G, A = rd("games.csv"), rd("agents.csv")
+    if not G or not A:
+        raise ValueError(f"run {d.name!r} has no completed games (games.csv is empty)")
     for r in G:
         r["game"] = int(r["game"])
         for k in ("saves", "format_errors", "fallbacks", "self_leaks"):
             r[k] = int(r[k])
     for r in A:
         r["game"] = int(r["game"])
-        for k in ("points_total", "votes_cast", "votes_on_mafia", "days_alive"):
+        for k in ("points_total", "votes_cast", "votes_on_mafia", "days_alive", "memories_active", "beliefs_active",
+                  "lessons_active"):
             r[k] = int(r[k])
         r["won"] = r["team_won"] == "True"
     return dict(id=d.name, dir=d, group=G[0]["group"], G=G, A=A)
@@ -84,15 +87,19 @@ def adjust(runs, base):
 
 
 def paired(mem, ctl, n=2000):
+    """Pair by game number, only where the seeds match. Returns (n, mean, lo, hi, seed_mismatches, nan_dropped)."""
     pg = lambda r: {g: mean(a["adj"] for a in r["A"] if a["game"] == g) for g in {a["game"] for a in r["A"]}}
+    ms, cs = ({x["game"]: x["seed"] for x in r["G"]} for r in (mem, ctl))
     m, c = pg(mem), pg(ctl)
-    d = np.array([m[g] - c[g] for g in sorted(m.keys() & c.keys())])
-    if not len(d):
-        return None
-    rng = np.random.default_rng(0)
-    boots = rng.choice(d, (n, len(d))).mean(axis=1)
+    common = sorted(m.keys() & c.keys())
+    ok = [g for g in common if ms[g] == cs[g]]
+    d = np.array([m[g] - c[g] for g in ok])
+    keep = d[~np.isnan(d)]
+    if not len(keep):
+        return 0, float("nan"), float("nan"), float("nan"), len(common) - len(ok), len(d)
+    boots = np.random.default_rng(0).choice(keep, (n, len(keep))).mean(axis=1)
     lo, hi = np.percentile(boots, [2.5, 97.5])
-    return len(d), d.mean(), lo, hi
+    return len(keep), keep.mean(), lo, hi, len(common) - len(ok), len(d) - len(keep)
 
 
 def memory_stats(r, names):
@@ -133,7 +140,7 @@ def build(runs: list[dict], names: dict[str, str]) -> str:
 
     def m3(g, a):
         town = [x for x in a if x["role"] != "mafia"]
-        return [sum(x["votes_on_mafia"] for x in town) / max(1, sum(x["votes_cast"] for x in town)),
+        return [sum(x["votes_on_mafia"] for x in town) / sum(x["votes_cast"] for x in town) if sum(x["votes_cast"] for x in town) else float("nan"),
                 mean(x["saves"] for x in g), mean(x["days_alive"] for x in a if x["role"] == "mafia")]
     o.append(windowed(runs, m3, ["vote acc", "save rate", "mafia days"]))
 
@@ -160,6 +167,9 @@ def build(runs: list[dict], names: dict[str, str]) -> str:
     o.append("## 6. Memory stats\n")
     shown = False
     for r in mem:
+        o.append(f"### {r['id']} (active memories per agent, mean per window)\n")
+        o.append(windowed([r], lambda g, a: [mean(x["beliefs_active"] for x in a), mean(x["lessons_active"] for x in a),
+                                             mean(x["memories_active"] for x in a)], ["beliefs", "lessons", "memories"]))
         rows = memory_stats(r, names)
         if rows:
             shown = True
@@ -171,9 +181,14 @@ def build(runs: list[dict], names: dict[str, str]) -> str:
     o.append("## 7. Paired comparison (memory - control)\n")
     p = paired(mem[0], ctl[0]) if mem and ctl else None
     if p:
-        o.append(f"{mem[0]['id']} vs {ctl[0]['id']}: {p[0]} games paired by game number. Per-game difference of mean "
+        if p[4]:
+            o.append(f"WARNING: {p[4]} game(s) had different seeds in the two runs and were excluded from pairing.\n")
+        if not p[0]:
+            p = None
+    if p:
+        o.append(f"{mem[0]['id']} vs {ctl[0]['id']}: {p[0]} games paired by game number and seed ({p[5]} dropped as nan). Per-game difference of mean "
                  f"role-adjusted points across the 7 agents.\n\nmean {p[1]:.3f}, bootstrap 95% CI [{p[2]:.3f}, {p[3]:.3f}] "
                  "(2,000 resamples, seed 0)\n")
     else:
-        o.append("Skipped: needs one memory run and one control run.\n")
+        o.append("Skipped: needs one memory run and one control run with matching seeds.\n")
     return "\n".join(o)

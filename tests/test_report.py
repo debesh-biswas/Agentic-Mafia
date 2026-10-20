@@ -70,3 +70,25 @@ def test_scene_beats():
     assert "look_at" not in b[2] and b[0]["actor"] is None and b[4]["est_duration_s"] == 0.4
     blob = json.dumps(b)
     assert "secret" not in blob and "mafia" not in blob and "self_leak" not in blob and "urgency" not in blob
+
+
+def test_memory_over_time_and_seed_mismatch(tmp_path):
+    make(tmp_path)
+    c = load_run(ROOT / "config/run_local.yaml").model_copy(update={"run_id": "other", "games": 8, "group": "control", "seed": 7})
+    run_season(c, mock=True, runs_dir=tmp_path)
+    runs = lambda *n: [rep.load(tmp_path / x) for x in n]
+    t = rep.build(runs("other", "memory"), {})
+    assert "WARNING: 8 game(s)" in t and "Skipped" in t.split("## 7")[1]
+    t = rep.build(runs("control", "memory"), {})
+    assert "WARNING" not in t and "0 dropped as nan" in t
+    row = next(l for l in t.split("active memories per agent")[1].splitlines() if l.startswith("| all"))
+    assert any(float(x) > 0 for x in re.findall(r"\d+\.\d{3}", row))
+
+
+def test_empty_games_csv_cli_error(tmp_path):
+    d = tmp_path / "e"
+    d.mkdir()
+    (d / "games.csv").write_text("run,group,game\n")
+    (d / "agents.csv").write_text("run,group,game\n")
+    r = CliRunner().invoke(app, ["report", "--runs", "e", "--runs-dir", str(tmp_path)])
+    assert r.exit_code == 1 and "no completed games" in r.output

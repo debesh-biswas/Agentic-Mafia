@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import os
 import re
+import threading
 import time
 
 import openai
@@ -102,16 +103,40 @@ class LLMClient:
         self._sdk_override = sdk  # tests pass an object shaped like AsyncOpenAI
         if sdk is None and cfg.api_key_env and not os.environ.get(cfg.api_key_env):
             raise RuntimeError(f"environment variable {cfg.api_key_env} is not set or empty")
-        self._loop_state = None  # (loop, sdk, semaphore): connection pools can't cross event loops
+        self._lock = threading.Lock()
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._thread: threading.Thread | None = None
+        self._st = None  # (sdk, semaphore), created once and reused
 
     def _state(self):
-        loop = asyncio.get_running_loop()
-        if self._loop_state is None or self._loop_state[0] is not loop:
-            key = os.environ.get(self.cfg.api_key_env) if self.cfg.api_key_env else "none"
-            sdk = self._sdk_override or openai.AsyncOpenAI(
-                base_url=self.cfg.base_url, api_key=key or "none", timeout=self.cfg.timeout_s, max_retries=0)
-            self._loop_state = (loop, sdk, asyncio.Semaphore(self.cfg.max_concurrency))
-        return self._loop_state[1:]
+        with self._lock:
+            if self._st is None:
+                key = os.environ.get(self.cfg.api_key_env) if self.cfg.api_key_env else "none"
+                sdk = self._sdk_override or openai.AsyncOpenAI(
+                    base_url=self.cfg.base_url, api_key=key or "none", timeout=self.cfg.timeout_s, max_retries=0)
+                self._st = (sdk, asyncio.Semaphore(self.cfg.max_concurrency))  # binds to the loop on first use
+            return self._st
+
+    def _loop_running(self) -> asyncio.AbstractEventLoop:
+        """One persistent loop on a daemon thread; every sync call() is submitted to it."""
+        with self._lock:
+            if self._loop is None:
+                loop = asyncio.new_event_loop()
+                self._thread = threading.Thread(target=loop.run_forever, name="llm-loop", daemon=True)
+                self._thread.start()
+                self._loop = loop
+            return self._loop
+
+    def close(self) -> None:
+        with self._lock:
+            loop, thread, st, self._loop, self._thread, self._st = self._loop, self._thread, self._st, None, None, None
+        if loop is None:
+            return
+        if st:
+            asyncio.run_coroutine_threadsafe(st[0].close(), loop).result()
+        loop.call_soon_threadsafe(loop.stop)
+        thread.join()
+        loop.close()
 
     def _kwargs(self, call_type: str, schema: type[BaseModel]) -> dict:
         c = self.cfg
@@ -166,11 +191,6 @@ class LLMClient:
         return await parse_with_retry(lambda m: self._send(m, kw), system, user, schema, call_type, agent_id)
 
     def call(self, call_type, system, user, schema, agent_id):
-        async def run():
-            try:
-                return await self.acall(call_type, system, user, schema, agent_id)
-            finally:  # close the pool before this event loop dies
-                if self._loop_state:
-                    await self._loop_state[1].close()
-                    self._loop_state = None
-        return asyncio.run(run())
+        """Thread-safe: any number of threads may call at once; max_concurrency bounds the requests in flight."""
+        return asyncio.run_coroutine_threadsafe(
+            self.acall(call_type, system, user, schema, agent_id), self._loop_running()).result()

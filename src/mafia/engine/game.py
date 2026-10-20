@@ -1,4 +1,5 @@
 import random
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -32,7 +33,8 @@ class GameResult:
 
 class Game:
     def __init__(self, rules: Rules, personas: list[Persona], agents: dict, run_id: str, game_index: int,
-                 run_seed: int, group: str, scoring_version: int, prompt_version: int, record: bool = True):
+                 run_seed: int, group: str, scoring_version: int, prompt_version: int, record: bool = True, concurrent: bool = True):
+        self.concurrent = concurrent  # plan/night agent calls in threads; results are still handled in seat order
         self.rules, self.agents, self.group = rules, agents, group
         self.run_seed = run_seed
         self.fb_rng = rng_for(run_seed, game_index, "fallback")
@@ -84,26 +86,61 @@ class Game:
             if self._prio and pid in self._reply else None
 
     def _ask(self, pid: str, phase: Phase, method: str, validate, fallback):
-        """DRD 5.9: call, validate, one retry with the error in the view, then fallback.
-        LLMFormatError (client already retried) goes straight to fallback; other LLMError/ProviderMismatch propagate."""
-        err = why = None
+        """DRD 5.9 for one agent, no threads."""
+        return self._ask_all([(pid, validate, fallback)], phase, method, threads=False)[0]
+
+    def _ask_all(self, items: list, phase: Phase, method: str, threads: bool = True) -> list:
+        """DRD 5.9 for (pid, validate, fallback) items given in seat order: call, validate, one retry with the error
+        in the view, then fallback. LLMFormatError (client already retried) goes straight to fallback; other
+        LLMError/ProviderMismatch propagate. Only the agent calls run in threads (phases 1 and 3); validation,
+        drains, fallbacks and emits happen here in item order, so the event log never depends on completion order."""
+        parallel = threads and self.concurrent and len(items) > 1
+        errs: dict[str, str | None] = {pid: None for pid, _, _ in items}
+        whys: dict[str, str] = {}
+        done: dict[str, object] = {}
+        todo = list(items)
         for attempt in (0, 1):
-            view = self.view_for(pid, phase, retry_error=err and
-                                 f"Your last answer was invalid: {err}. Answer again with valid JSON.")
-            try:
+            views = {pid: self.view_for(pid, phase, retry_error=errs[pid] and
+                                        f"Your last answer was invalid: {errs[pid]}. Answer again with valid JSON.")
+                     for pid, _, _ in todo}
+            outs = self._run_agents(todo, method, views, parallel)
+            nxt = []
+            for (pid, validate, fallback), (dec, exc) in zip(todo, outs):
+                self._drain(pid)
                 try:
-                    dec = getattr(self.agents[pid], method)(view)
-                finally:
-                    self._drain(pid)
-                return validate(dec, attempt == 1)
-            except (Invalid, ValidationError, ValueError, TypeError) as e:  # bad agent output; engine bugs propagate
-                err, why = str(e) or type(e).__name__, f"{type(e).__name__}: {e}"
-            except LLMFormatError as e:
-                why = f"{type(e).__name__}: {e}"
+                    if exc:
+                        raise exc
+                    done[pid] = validate(dec, attempt == 1)
+                except (Invalid, ValidationError, ValueError, TypeError) as e:  # bad agent output; engine bugs propagate
+                    errs[pid], whys[pid] = str(e) or type(e).__name__, f"{type(e).__name__}: {e}"
+                    nxt.append((pid, validate, fallback))
+                except LLMFormatError as e:
+                    whys[pid] = f"{type(e).__name__}: {e}"
+            todo = nxt
+            if not todo:
                 break
-        chosen = fallback()
-        self.emit("fallback", "debug", pid, call_type=method, reason=why, chosen=str(chosen))
-        return chosen
+        # a pid that failed validation on the retry is in todo too; format errors are in neither list
+        out = []
+        for pid, _, fallback in items:
+            if pid not in done:
+                chosen = fallback()
+                self.emit("fallback", "debug", pid, call_type=method, reason=whys[pid], chosen=str(chosen))
+                done[pid] = chosen
+            out.append(done[pid])
+        return out
+
+    def _run_agents(self, todo: list, method: str, views: dict, parallel: bool) -> list:
+        """Agent calls only; returns (decision, exception) per item in item order."""
+        def one(pid):
+            try:
+                return getattr(self.agents[pid], method)(views[pid]), None
+            except Exception as e:  # re-raised or classified on the main thread
+                return None, e
+        pids = [pid for pid, _, _ in todo]
+        if not parallel:
+            return [one(p) for p in pids]
+        with ThreadPoolExecutor(len(pids)) as ex:
+            return list(ex.map(one, pids))
 
     def _drain(self, pid: str) -> None:
         """Optional agent hook: LLM call records become llm_call debug events."""
@@ -157,10 +194,9 @@ class Game:
 
     def run_plans(self) -> None:
         self.st.phase = Phase.PLAN
-        for pid in self.st.players:
-            plan = self._ask(pid, Phase.PLAN, "plan",
-                             lambda d, f, pid=pid: self._cap(d.plan, self.rules.plan_max_words, f, pid, "plan"),
-                             lambda: "")
+        items = [(pid, lambda d, f, pid=pid: self._cap(d.plan, self.rules.plan_max_words, f, pid, "plan"), lambda: "")
+                 for pid in self.st.players]
+        for pid, plan in zip(self.st.players, self._ask_all(items, Phase.PLAN, "plan")):
             if hasattr(self.agents[pid], "plan_accepted"):
                 self.agents[pid].plan_accepted(plan)
             self.emit("plan", f"private:{pid}", pid, plan=plan)
@@ -171,6 +207,7 @@ class Game:
         alive = R.living(st.players)
         doctor = next((p for p in alive if st.players[p].role is Role.DOCTOR), None)
         target = protect = None
+        items, kinds = [], {}
         for pid in alive:
             p = st.players[pid]
             mafia, doc = p.role is Role.MAFIA, p.role is Role.DOCTOR
@@ -183,10 +220,14 @@ class Game:
                 notes = self._cap(d.notes, rules.notes_max_words, final, pid, "night")
                 return notes, min(max(d.urgency, rules.urgency_min), rules.urgency_max), choice
 
-            def fallback(legal=legal, mafia=mafia, doc=doc):
+            def fallback(p=p, legal=legal, mafia=mafia, doc=doc):
                 return p.notes, p.urgency, self.fb_rng.choice(legal) if mafia or doc else None
 
-            p.notes, p.urgency, choice = self._ask(pid, Phase.NIGHT, "night", validate, fallback)
+            items.append((pid, validate, fallback))
+            kinds[pid] = mafia
+        for pid, (notes, urgency, choice) in zip(alive, self._ask_all(items, Phase.NIGHT, "night")):
+            p, mafia = st.players[pid], kinds[pid]
+            p.notes, p.urgency = notes, urgency
             if hasattr(self.agents[pid], "notes_accepted"):
                 self.agents[pid].notes_accepted(st.day, p.notes)
             self.emit("night_notes", f"private:{pid}", pid, notes=p.notes, urgency=p.urgency)

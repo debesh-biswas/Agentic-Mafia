@@ -4,6 +4,7 @@ import asyncio
 import json
 import random
 import re
+import threading
 import zlib
 from collections import Counter
 from pathlib import Path
@@ -17,30 +18,49 @@ class _Sync:
         return asyncio.run(self.acall(call_type, system, user, schema, agent_id))
 
 
-class RecordingLLM(_Sync):
-    """Wraps a client for one game: appends one JSON line per call. call_index counts per (agent_id, call_type)."""
+class RecordingLLM:
+    """Wraps a client for one game: appends one JSON line per call. call_index counts per (agent_id, call_type).
+    Thread-safe: the index is taken under a lock before the inner call, so concurrent calls keep distinct keys."""
 
     def __init__(self, inner, path):
-        self.inner, self.path, self.n = inner, Path(path), Counter()
+        self.inner, self.path, self.n, self._lock = inner, Path(path), Counter(), threading.Lock()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.write_text("")  # one file per game: a rerun starts clean
 
+    def _key(self, call_type, agent_id) -> dict:
+        with self._lock:
+            i = self.n[agent_id, call_type]
+            self.n[agent_id, call_type] += 1
+        return {"key": [agent_id, call_type, i]}
+
+    def _ok(self, row, model, rec):
+        self._write(row | {"response": model.model_dump(mode="json"), "record": rec})
+
+    def _err(self, row, e):
+        self._write(row | {"error": str(e), "format": isinstance(e, LLMFormatError), "record": e.record})
+
+    def call(self, call_type, system, user, schema, agent_id):
+        row = self._key(call_type, agent_id)
+        try:
+            model, rec = self.inner.call(call_type, system, user, schema, agent_id)
+        except LLMError as e:
+            self._err(row, e)
+            raise
+        self._ok(row, model, rec)
+        return model, rec
+
     async def acall(self, call_type, system, user, schema, agent_id):
-        i = self.n[agent_id, call_type]  # taken before the await so concurrent calls keep distinct indices
-        self.n[agent_id, call_type] += 1
-        row: dict = {"key": [agent_id, call_type, i]}
+        row = self._key(call_type, agent_id)
         try:
             model, rec = await self.inner.acall(call_type, system, user, schema, agent_id)
-            row |= {"response": model.model_dump(mode="json"), "record": rec}
-            self._write(row)
-            return model, rec
         except LLMError as e:
-            row |= {"error": str(e), "format": isinstance(e, LLMFormatError), "record": e.record}
-            self._write(row)
+            self._err(row, e)
             raise
+        self._ok(row, model, rec)
+        return model, rec
 
     def _write(self, row):
-        with self.path.open("a") as f:
+        with self._lock, self.path.open("a") as f:
             f.write(json.dumps(row) + "\n")
 
 
@@ -51,11 +71,12 @@ class ReplayLLM(_Sync):
             if tuple(r["key"]) in self.rows:
                 raise ValueError(f"duplicate recorded key {r['key']} in {path}")
             self.rows[tuple(r["key"])] = r
-        self.n = Counter()
+        self.n, self._lock = Counter(), threading.Lock()
 
     async def acall(self, call_type, system, user, schema, agent_id):
-        i = self.n[agent_id, call_type]
-        self.n[agent_id, call_type] += 1
+        with self._lock:
+            i = self.n[agent_id, call_type]
+            self.n[agent_id, call_type] += 1
         row = self.rows.get((agent_id, call_type, i))
         if row is None:
             raise KeyError(f"no recorded response for (agent={agent_id!r}, call_type={call_type!r}, call_index={i})")
@@ -71,12 +92,13 @@ class MockLLM(_Sync):
     Runs the real parse/corrective-retry path."""
 
     def __init__(self, script):
-        self.script, self.sent = script, []
+        self.script, self.sent, self._lock = script, [], threading.Lock()
 
     async def acall(self, call_type, system, user, schema: type[BaseModel], agent_id):
         async def send(messages):
-            self.sent.append(list(messages))
-            text = self.script(call_type, messages[-1]["content"]) if callable(self.script) else self.script.pop(0)
+            with self._lock:
+                self.sent.append(list(messages))
+                text = self.script(call_type, messages[-1]["content"]) if callable(self.script) else self.script.pop(0)
             return text, {}
         return await parse_with_retry(send, system, user, schema, call_type, agent_id)
 
@@ -86,15 +108,15 @@ class ScriptedLLM(MockLLM):
 
     def __init__(self, seed: int, names: dict[str, str]):
         super().__init__(self._reply)
-        self.seed, self.names, self.agent = seed, names, ""
+        self.seed, self.names, self._tl = seed, names, threading.local()  # agent id is per thread
 
     async def acall(self, call_type, system, user, schema, agent_id):
-        self.agent = agent_id
+        self._tl.agent = agent_id
         return await super().acall(call_type, system, user, schema, agent_id)
 
     def _reply(self, call_type, user):
-        r = random.Random(zlib.crc32(f"{self.seed}|{self.agent}|{call_type}|{user}".encode()))
-        me = self.names[self.agent]
+        r = random.Random(zlib.crc32(f"{self.seed}|{self._tl.agent}|{call_type}|{user}".encode()))
+        me = self.names[self._tl.agent]
         m = re.search(r"Alive: ([^.]*)\.", user)
         others = [n for n in (m[1].split(", ") if m else []) if n != me]
         if call_type == "plan":

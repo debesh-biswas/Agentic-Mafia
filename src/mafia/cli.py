@@ -27,7 +27,7 @@ def sim(games: int = 200000, seed: int = 1, save_run: str | None = None):
     t0, town, saves, days = time.time(), 0, 0, []
     for i in range(games):
         g = Game(rules, personas, random_agents(rules, seed, i, ids), save_run or "sim", i, seed, "sim", 0, 0,
-                 record=bool(save_run))
+                 record=bool(save_run), concurrent=False)
         r = g.play()
         if save_run:
             EventLog(ROOT / "runs" / save_run, i).write(g.events)

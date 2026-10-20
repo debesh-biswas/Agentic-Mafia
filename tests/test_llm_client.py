@@ -215,7 +215,12 @@ def test_missing_api_key_and_pin_without_provider(monkeypatch):
         cl.call("vote", "s", "u", VoteDecision, "a")
 
 
-def test_sync_call_closes_sdk():
-    cl, sdk = client(cfg(), resp())
+def test_close_closes_sdk_and_client_is_reusable():
+    cl, sdk = client(cfg(), resp(), resp())
     cl.call("vote", "s", "u", VoteDecision, "a")
+    assert sdk.closed == 0  # persistent: not closed per call
+    cl.close()
     assert sdk.closed == 1
+    cl.call("vote", "s", "u", VoteDecision, "a")  # restarts lazily
+    cl.close()
+    cl.close()

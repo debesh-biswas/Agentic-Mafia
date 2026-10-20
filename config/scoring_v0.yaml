@@ -1,0 +1,7 @@
+# Provisional scoring for calibration. v1 is written by `mafia calibrate` after 50-100 control games.
+version: 0
+win_points: {town: 13, mafia: 8}   # random-play estimate of round(5 / role win rate)
+bonus:
+  town_vote_on_mafia: 1            # villagers and doctor, per vote cast on the mafia
+  doctor_successful_save: 2        # per night the protected player was the mafia's target
+  mafia_town_mislynch: 1           # per day the town votes out a non-mafia player

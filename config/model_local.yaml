@@ -1,0 +1,20 @@
+name: local-mlx
+base_url: http://localhost:1234/v1     # LM Studio default; mlx_lm.server default is http://localhost:8080/v1
+api_key_env: null
+model: openai/gpt-oss-20b              # use the exact id your local server reports
+structured_output: json_schema         # json_schema | json_object | prompt_only (verify in M2)
+reasoning_param: reasoning_effort      # verify in M2; if unsupported, set effort in the server UI
+reasoning:
+  plan: medium
+  night: medium
+  speak: low
+  vote: medium
+  last_words: low
+  reflect: medium
+  summaries: low
+  deep_reflect: medium
+  compress: low
+temperature: 0.8
+max_output_tokens: {default: 600, reflect: 1500, summaries: 1200}
+timeout_s: 180
+max_concurrency: 1

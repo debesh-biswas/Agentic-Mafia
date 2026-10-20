@@ -1,0 +1,18 @@
+# Locked game rules (see docs/PRD.md section 4). Change only with intent.
+players: 7
+roles: {mafia: 1, doctor: 1, villager: 5}
+start_phase: night
+max_day: 8                       # reaching the morning of day 8 with no winner = town wins
+speech_max_words: 60
+last_words_max_words: 20
+notes_max_words: 150
+plan_max_words: 100
+turns_per_player_per_day: 2      # discussion budget = this x living players
+max_turns_per_player_per_day: 3
+priority_pass_consumes_turn: true
+urgency_min: 0
+urgency_max: 4
+doctor_self_protect_consecutive: false
+allow_abstain: false
+allow_self_vote: false
+reveal_roles_on_elimination: false

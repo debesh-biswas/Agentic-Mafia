@@ -1,0 +1,18 @@
+embedding_model: BAAI/bge-small-en-v1.5   # 384-dim, local in both modes
+retrieval:
+  top_k: 10
+  weights: {recency: 1.0, importance: 1.0, relevance: 1.0}
+  recency_decay_per_game: 0.90
+  include_failed_lessons: 2
+related_beliefs_for_reflection: 8
+reflection:
+  questions: 3
+  memories_per_question: 5
+  max_insights: 5
+compression:
+  every_games: 10
+  merge_episodic_older_than_games: 10
+fading:
+  max_importance: 3
+  unretrieved_for_games: 20
+deep_reflection_every_games: 5

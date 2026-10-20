@@ -20,10 +20,10 @@ class LLMPlanAgent(RandomAgent):
         return self.llm.call("plan", "sys", "usr", PlanDecision, self.agent_id)[0]
 
 
-def _game(llm):
+def _game(llm, concurrent=False):
     agents = random_agents(R, 3, 0, IDS)
     agents[IDS[0]] = LLMPlanAgent(agents[IDS[0]], llm)
-    return Game(R, P, agents, "t", 0, 3, "test", 0, 0)
+    return Game(R, P, agents, "t", 0, 3, "test", 0, 0, concurrent=concurrent)
 
 
 def test_format_error_goes_straight_to_fallback():

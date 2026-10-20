@@ -108,7 +108,7 @@ class Game:
             for (pid, validate, fallback), (dec, exc) in zip(todo, outs):
                 self._drain(pid)
                 try:
-                    if exc:
+                    if exc is not None:
                         raise exc
                     done[pid] = validate(dec, attempt == 1)
                 except (Invalid, ValidationError, ValueError, TypeError) as e:  # bad agent output; engine bugs propagate

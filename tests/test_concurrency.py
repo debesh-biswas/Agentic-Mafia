@@ -1,4 +1,5 @@
 import asyncio
+import pytest
 import random
 import threading
 import time
@@ -7,7 +8,7 @@ from types import SimpleNamespace as NS
 from mafia.agents.llm_agent import LLMAgent
 from mafia.config import ROOT, ModelCfg, Personas, Rules, Scoring, load
 from mafia.engine.game import Game
-from mafia.llm.client import LLMClient
+from mafia.llm.client import LLMClient, LLMError, LLMFormatError
 from mafia.llm.recorder import RecordingLLM, ScriptedLLM
 from mafia.llm.schemas import PlanDecision, VoteDecision
 
@@ -96,3 +97,42 @@ def test_client_concurrent_calls_respect_semaphore():
     cl.close()
     assert len(outs) == 10 and all(o[0].vote == "Bo" for o in outs)
     assert state.peak == 3
+
+
+class Failing(Sleepy):
+    """Agent `bad` raises `exc` on its night calls."""
+
+    def __init__(self, inner, bad, exc):
+        super().__init__(inner)
+        self.bad, self.exc = bad, exc
+
+    def call(self, call_type, system, user, schema, agent_id):
+        if call_type == "night" and agent_id == self.bad:
+            raise self.exc
+        return super().call(call_type, system, user, schema, agent_id)
+
+
+def test_format_error_in_concurrent_night_falls_back_identically():
+    bad = P[2].agent_id
+    mk = lambda: Failing(ScriptedLLM(5, NAMES), bad, LLMFormatError("garbage", {"call_type": "night", "latency_s": 0}))
+    seq, conc = _play(mk(), concurrent=False), _play(mk(), concurrent=True)
+    assert seq == conc
+    fb = [e for e in conc if e["type"] == "fallback" and e["actor"] == bad and e["payload"]["call_type"] == "night"]
+    assert fb and conc[-1]["type"] == "role_reveal"
+
+
+def test_plain_llm_error_propagates_in_both_modes():
+    for conc in (False, True):
+        with pytest.raises(LLMError, match="net down"):
+            _play(Failing(ScriptedLLM(5, NAMES), P[2].agent_id, LLMError("net down", {})), concurrent=conc)
+
+
+def test_call_from_loop_thread_raises():
+    cl = LLMClient(load(ModelCfg, ROOT / "config/model_local.yaml"))
+
+    async def inside():
+        cl.call("vote", "s", "u", VoteDecision, "a")
+
+    with pytest.raises(RuntimeError, match="deadlock"):
+        asyncio.run_coroutine_threadsafe(inside(), cl._loop_running()).result()
+    cl.close()

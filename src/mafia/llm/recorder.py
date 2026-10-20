@@ -89,7 +89,8 @@ class ReplayLLM(_Sync):
 
 class MockLLM(_Sync):
     """Scripted raw replies (str, consumed in order, retries included), or a callable (call_type, user) -> str.
-    Runs the real parse/corrective-retry path."""
+    Runs the real parse/corrective-retry path. A shared list script is consumed in call order, so it is only
+    for single-agent or sequential use; under concurrency use a callable."""
 
     def __init__(self, script):
         self.script, self.sent, self._lock = script, [], threading.Lock()

@@ -64,6 +64,19 @@ def play(run_config: str = O, games: int = 1, view: str = "public", mock: bool =
     inner = ScriptedLLM(run.seed, names) if mock else LLMClient(load(ModelCfg, run.model_file))
     agents = {p.agent_id: LLMAgent(p, pcfg, inner, rules, scoring, run.group) for p in personas}
     run_dir = ROOT / "runs" / run.run_id
+    try:
+        _play_games(games, inner, agents, run, rules, scoring, personas, names, view, run_dir)
+    finally:
+        if hasattr(inner, "close"):
+            inner.close()
+
+
+def _play_games(games, inner, agents, run, rules, scoring, personas, names, view, run_dir):
+    from mafia.engine.game import Game
+    from mafia.llm.recorder import RecordingLLM
+    from mafia.logs.events import EventLog
+    from mafia.renderers.text import TextRenderer
+
     for i in range(games):
         llm = RecordingLLM(inner, run_dir / "llm_cache" / f"{i + 1:04d}.jsonl") if run.record_llm_responses else inner
         for a in agents.values():

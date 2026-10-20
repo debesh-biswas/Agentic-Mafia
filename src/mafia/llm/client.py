@@ -130,13 +130,14 @@ class LLMClient:
     def close(self) -> None:
         with self._lock:
             loop, thread, st, self._loop, self._thread, self._st = self._loop, self._thread, self._st, None, None, None
-        if loop is None:
-            return
-        if st:
-            asyncio.run_coroutine_threadsafe(st[0].close(), loop).result()
-        loop.call_soon_threadsafe(loop.stop)
-        thread.join()
-        loop.close()
+        try:
+            if st and loop is not None:
+                asyncio.run_coroutine_threadsafe(st[0].close(), loop).result()
+        finally:
+            if loop is not None:
+                loop.call_soon_threadsafe(loop.stop)
+                thread.join()
+                loop.close()
 
     def _kwargs(self, call_type: str, schema: type[BaseModel]) -> dict:
         c = self.cfg
@@ -187,10 +188,13 @@ class LLMClient:
             "reasoning": getattr(msg, "reasoning", None) or getattr(msg, "reasoning_content", None)}
 
     async def acall(self, call_type: str, system: str, user: str, schema: type[BaseModel], agent_id: str):
+        """Must run on this client's loop (the semaphore binds to it); from other threads use call()."""
         kw = self._kwargs(call_type, schema)
         return await parse_with_retry(lambda m: self._send(m, kw), system, user, schema, call_type, agent_id)
 
     def call(self, call_type, system, user, schema, agent_id):
         """Thread-safe: any number of threads may call at once; max_concurrency bounds the requests in flight."""
+        if threading.current_thread() is self._thread:
+            raise RuntimeError("LLMClient.call() from the client's own loop thread would deadlock; await acall()")
         return asyncio.run_coroutine_threadsafe(
             self.acall(call_type, system, user, schema, agent_id), self._loop_running()).result()

@@ -70,9 +70,36 @@ def season(run_config: str = O, resume: bool = False, mock: bool = typer.Option(
 
 
 @app.command()
-def calibrate(run: str = O):
+def calibrate(run: str = O, force: bool = False, runs_dir: str | None = typer.Option(None, hidden=True),
+              out: str | None = typer.Option(None, hidden=True)):
     """Win rates and proposed scoring_v1.yaml."""
-    _todo()
+    import json
+    from pathlib import Path
+
+    from mafia.config import ROOT, Scoring, load
+    from mafia.runner.calibrate import propose, winners_from_run, write_scoring
+
+    target = Path(out) if out else ROOT / "config/scoring_v1.yaml"
+    if target.exists() and not force:
+        typer.echo(f"{target} exists; pass --force to overwrite")
+        raise typer.Exit(1)
+    d = (Path(runs_dir) if runs_dir else ROOT / "runs") / run
+    if not (d / "games.csv").exists() or not (d / "manifest.json").exists():
+        typer.echo(f"no games.csv or manifest.json for run {run!r}")
+        raise typer.Exit(1)
+    base = load(Scoring, ROOT / json.loads((d / "manifest.json").read_text())["run_config"]["scoring_config"])
+    try:
+        p = propose(winners_from_run(d), base)
+    except ValueError as e:
+        typer.echo(str(e))
+        raise typer.Exit(1)
+    typer.echo(f"{run}: {p['n']} games")
+    for team in ("town", "mafia"):
+        t = p[team]
+        typer.echo(f"{team:7} wins={t['wins']} rate={t['rate']:.3f} 95% CI [{t['ci'][0]:.3f}, {t['ci'][1]:.3f}] "
+                   f"-> win_points {t['win_points']}")
+    write_scoring(target, run, p, base)
+    typer.echo(f"wrote {target}")
 
 
 @app.command()

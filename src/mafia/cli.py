@@ -187,15 +187,42 @@ def inspect(
 
 
 @app.command()
-def report(runs: list[str] = O):
+def report(runs: list[str] = O, runs_dir: str | None = typer.Option(None, hidden=True)):
     """Markdown report for runs."""
-    _todo()
+    from datetime import datetime
+    from pathlib import Path
+
+    from mafia.config import ROOT, Personas, load
+    from mafia.metrics import report as rep
+
+    base = Path(runs_dir) if runs_dir else ROOT / "runs"
+    for r in runs:
+        if not (base / r / "games.csv").exists():
+            typer.echo(f"no games.csv for run {r!r}")
+            raise typer.Exit(1)
+    names = {p.agent_id: p.name for p in load(Personas, ROOT / "config/personas.yaml").personas}
+    out = base / f"report_{datetime.now():%Y%m%d-%H%M%S}.md"
+    out.write_text(rep.build([rep.load(base / r) for r in runs], names))
+    typer.echo(str(out))
 
 
 @app.command()
-def scene(run: str = O, game: int = O, out: str = O):
+def scene(run: str = O, game: int = O, out: str = O, runs_dir: str | None = typer.Option(None, hidden=True)):
     """Export a scene script (stub)."""
-    _todo()
+    import json
+    from pathlib import Path
+
+    from mafia.config import ROOT, Personas, load
+    from mafia.logs.events import EventLog
+    from mafia.renderers.scene_script import beats
+
+    log = EventLog((Path(runs_dir) if runs_dir else ROOT / "runs") / run, game - 1)
+    if not log.path.exists():
+        typer.echo(f"no such game log: {log.path}")
+        raise typer.Exit(1)
+    seats = {p.agent_id: p.seat for p in load(Personas, ROOT / "config/personas.yaml").personas}
+    Path(out).write_text(json.dumps(beats(log.read(), seats), indent=2))
+    typer.echo(out)
 
 
 _CHECKS = [  # (schema, call_type, tiny prompt)

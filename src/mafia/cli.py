@@ -11,7 +11,7 @@ def _todo():
 
 
 @app.command()
-def sim(games: int = 200000, seed: int = 1):
+def sim(games: int = 200000, seed: int = 1, save_run: str | None = None):
     """Random-bot balance check."""
     import statistics
     import time
@@ -19,14 +19,18 @@ def sim(games: int = 200000, seed: int = 1):
     from mafia.agents.random_agent import random_agents
     from mafia.config import ROOT, Personas, Rules, load
     from mafia.engine.game import Game
+    from mafia.logs.events import EventLog
 
     rules = load(Rules, ROOT / "config/rules.yaml")
     personas = load(Personas, ROOT / "config/personas.yaml").personas
     ids = [p.agent_id for p in sorted(personas, key=lambda p: p.seat)]
     t0, town, saves, days = time.time(), 0, 0, []
     for i in range(games):
-        r = Game(rules, personas, random_agents(rules, seed, i, ids), "sim", i, seed, "sim", 0, 0,
-                 record=False).play()
+        g = Game(rules, personas, random_agents(rules, seed, i, ids), save_run or "sim", i, seed, "sim", 0, 0,
+                 record=bool(save_run))
+        r = g.play()
+        if save_run:
+            EventLog(ROOT / "runs" / save_run, i).write(g.events)
         town += r.winner == "town"
         saves += r.saves
         days.append(r.days)
@@ -62,7 +66,12 @@ def score(run: str = O, scoring: str = O):
 @app.command()
 def replay(run: str = O, game: int = O, view: str = "public"):
     """Replay a recorded game."""
-    _todo()
+    from mafia.config import ROOT, Personas, load
+    from mafia.logs.events import EventLog
+    from mafia.renderers.text import TextRenderer
+
+    names = {p.agent_id: p.name for p in load(Personas, ROOT / "config/personas.yaml").personas}
+    TextRenderer(names).render_game(EventLog(ROOT / "runs" / run, game - 1).read(), view)
 
 
 @app.command()

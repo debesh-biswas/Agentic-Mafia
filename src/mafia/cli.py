@@ -39,59 +39,37 @@ def sim(games: int = 200000, seed: int = 1, save_run: str | None = None):
                f"({time.time() - t0:.0f}s)")
 
 
+def _run(run_config, resume, mock, games=None, on_game=None):
+    from mafia.runner.season import RunExists, run_season
+    try:
+        run_season(run_config, mock=mock, resume=resume, games=games, on_game=on_game)
+    except RunExists as e:
+        typer.echo(str(e))
+        raise typer.Exit(1)
+
+
 @app.command()
-def play(run_config: str = O, games: int = 1, view: str = "public", mock: bool = typer.Option(False, hidden=True)):
-    """Play games with a run config."""
-    from mafia.agents.llm_agent import LLMAgent
-    from mafia.config import ROOT, ModelCfg, Personas, Rules, Scoring, load, load_run
-    from mafia.engine.game import Game
-    from mafia.llm.client import LLMClient
-    from mafia.llm.recorder import RecordingLLM, ScriptedLLM
-    from mafia.logs.events import EventLog
+def play(run_config: str = O, games: int = 1, view: str = "public", resume: bool = False,
+         mock: bool = typer.Option(False, hidden=True)):
+    """Play games with a run config, printing each transcript."""
+    from mafia.config import Personas, load, load_run
     from mafia.renderers.text import TextRenderer
 
     run = load_run(run_config)
     if run.group == "memory":
         typer.echo("memory group not implemented yet")
         raise typer.Exit(1)
-    rules, scoring = load(Rules, run.rules_config), load(Scoring, run.scoring_config)
-    pcfg = load(Personas, run.personas_config)
-    personas = pcfg.personas
-    names = {p.agent_id: p.name for p in personas}
+    names = {p.agent_id: p.name for p in load(Personas, run.personas_config).personas}
     if view not in {"public", "truth", *names}:
         typer.echo(f"unknown view {view!r}; use public, truth or one of: {', '.join(names)}")
         raise typer.Exit(1)
-    inner = ScriptedLLM(run.seed, names) if mock else LLMClient(load(ModelCfg, run.model_file))
-    agents = {p.agent_id: LLMAgent(p, pcfg, inner, rules, scoring, run.group) for p in personas}
-    run_dir = ROOT / "runs" / run.run_id
-    try:
-        _play_games(games, inner, agents, run, rules, scoring, personas, names, view, run_dir)
-    finally:
-        if hasattr(inner, "close"):
-            inner.close()
-
-
-def _play_games(games, inner, agents, run, rules, scoring, personas, names, view, run_dir):
-    from mafia.engine.game import Game
-    from mafia.llm.recorder import RecordingLLM
-    from mafia.logs.events import EventLog
-    from mafia.renderers.text import TextRenderer
-
-    for i in range(games):
-        llm = RecordingLLM(inner, run_dir / "llm_cache" / f"{i + 1:04d}.jsonl") if run.record_llm_responses else inner
-        for a in agents.values():
-            a.llm = llm
-        g = Game(rules, sorted(personas, key=lambda p: p.seat), agents, run.run_id, i, run.seed, run.group,
-                 scoring.version, run.prompt_version)
-        g.play()
-        EventLog(run_dir, i).write(g.events)
-        TextRenderer(names).render_game(g.events, view)
+    _run(run_config, resume, mock, games, lambda events, g: TextRenderer(names).render_game(events, view))
 
 
 @app.command()
-def season(run_config: str = O, resume: bool = False):
+def season(run_config: str = O, resume: bool = False, mock: bool = typer.Option(False, hidden=True)):
     """Run a full season."""
-    _todo()
+    _run(run_config, resume, mock)
 
 
 @app.command()
@@ -102,8 +80,24 @@ def calibrate(run: str = O):
 
 @app.command()
 def score(run: str = O, scoring: str = O):
-    """Recompute points for a run."""
-    _todo()
+    """Recompute points for a run from its logs (logs are not modified)."""
+    from mafia.config import ROOT, Personas, Scoring, load
+    from mafia.logs.events import EventLog
+    from mafia.scoring import leaderboard
+    from mafia.scoring.score import KEYS, score as rescore
+
+    cfg = load(Scoring, scoring)
+    names = {p.agent_id: p.name for p in load(Personas, ROOT / "config/personas.yaml").personas}
+    files = sorted((ROOT / "runs" / run / "games").glob("*.jsonl"))
+    if not files:
+        typer.echo(f"no game logs for run {run!r}")
+        raise typer.Exit(1)
+    per_game = [rescore(EventLog(ROOT / "runs" / run, i).read(), cfg) for i in range(len(files))]
+    tot = leaderboard.standings(per_game)
+    typer.echo(f"{run}: {len(files)} games, scoring v{cfg.version}")
+    for a in sorted(tot, key=lambda a: (-tot[a], names[a])):
+        parts = " ".join(f"{k.removeprefix('points_')}={sum(g[a][k] for g in per_game)}" for k in KEYS)
+        typer.echo(f"{names[a]:8} total={tot[a]:5}  {parts}")
 
 
 @app.command()

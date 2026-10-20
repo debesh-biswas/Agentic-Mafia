@@ -10,11 +10,10 @@ from pathlib import Path
 import yaml
 
 from mafia.logs.events import EventLog
-from mafia.renderers.text import TextRenderer, visible
+from mafia.renderers.text import visible
 
 BLOCK = 5
 REASON = {"parity": "parity", "mafia_eliminated": "mafia voted out", "day_limit": "day limit"}
-TRANSCRIPT = {"night_action", "night_resolution", "morning_announcement", "speech", "pass", "last_words", "role_reveal"}
 CSS = """
 :root{--bg:#f6f7f9;--card:#fff;--fg:#1d2330;--mute:#667085;--line:#e3e6ec;--town:#1f7a4d;--mafia:#b42318;--warn:#b54708}
 @media(prefers-color-scheme:dark){:root{--bg:#12151c;--card:#1b2030;--fg:#e8ebf2;--mute:#98a2b3;--line:#2c3347;--town:#4cc38a;--mafia:#ff7b72;--warn:#f5a623}}
@@ -28,6 +27,7 @@ th,td{padding:8px 10px;text-align:left;border-bottom:1px solid var(--line);white
 .card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin-bottom:10px}
 .card h3{margin:0 0 4px;font-size:1rem}.town{color:var(--town)}.mafia{color:var(--mafia)}.warn{color:var(--warn)}
 details{margin-top:8px}summary{cursor:pointer;color:var(--mute)}pre{white-space:pre-wrap;font:.85rem/1.5 ui-monospace,monospace;margin:8px 0 0}
+.chat{margin:4px 0}.chat b{margin-right:6px}.tag{color:var(--mute);font-size:.8rem;margin-left:6px}.priv{color:var(--mute);font-style:italic}
 .who{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:10px}ul{margin:4px 0;padding-left:20px}
 """
 
@@ -83,28 +83,19 @@ def _game(g, names, run_dir):
     head = (f"Game {g['game']} — <span class='{'town' if won else 'mafia'}'>{'Town' if won else 'Mafia'} won on day {g['days']}</span>"
             f" ({esc(REASON.get(g['end_reason'], g['end_reason']))})")
     bad = int(g["format_errors"]) + int(g["fallbacks"])
-    steps, lines, votes = [], [], []
+    steps = []
     try:
-        events = visible(EventLog(run_dir, int(g["game"]) - 1).read(), "truth")
-        tr = TextRenderer(names)
-        for e in events:
+        for e in visible(EventLog(run_dir, int(g["game"]) - 1).read(), "truth"):
             if e.type == "night_resolution":
                 steps.append(f"Night {e.day}: " + (f"{n(e.payload['eliminated'])} eliminated" if e.payload["eliminated"] else "saved by doctor"))
-            elif e.type == "vote":
-                votes.append(f"{names.get(e.actor, e.actor)}→{names.get(e.targets[0], e.targets[0])}")
             elif e.type == "vote_result":
-                out = "tie, nobody voted out" if e.payload["tie"] else f"{names.get(e.payload['eliminated'])} voted out"
-                steps.append(f"Day {e.day}: " + esc(out))
-                lines.append(f"Votes: {', '.join(votes)}. {out}.")
-                votes = []
-            elif e.type in TRANSCRIPT and (r := tr.line(e)):
-                lines.append(r[0])
+                steps.append(f"Day {e.day}: " + ("tie, nobody voted out" if e.payload["tie"] else f"{n(e.payload['eliminated'])} voted out"))
     except Exception:  # missing or torn log: show the summary only
-        lines = ["Transcript not available yet."]
+        pass
     return (f"<div class='card'><h3>{head}</h3><div>Mafia: <b>{n(g['mafia'])}</b> · Doctor: <b>{n(g['doctor'])}</b></div>"
             f"<div class='mute'>{' · '.join(steps)}</div>"
             + (f"<div class='warn'>{bad} problem(s) with model answers</div>" if bad else "")
-            + f"<details><summary>Full transcript</summary><pre>{esc(chr(10).join(lines))}</pre></details></div>")
+            + f"<div><a href='games/{int(g['game']):04d}.html'>Open full game →</a></div></div>")
 
 
 def _beliefs(run_dir, names):
@@ -130,11 +121,148 @@ def _beliefs(run_dir, names):
     return f"<h2>What the players believe now</h2><div class='who'>{out}</div>"
 
 
+def _fate(events, names):
+    fate = {}
+    for e in events:
+        if e.type == "night_resolution" and e.payload["eliminated"]:
+            fate[e.payload["eliminated"]] = f"eliminated night {e.day}"
+        elif e.type == "vote_result" and e.payload["eliminated"]:
+            fate[e.payload["eliminated"]] = f"voted out day {e.day}"
+    return fate
+
+
+FALLBACK_WHAT = {"speak": "speech", "vote": "vote", "night": "night choice", "last_words": "last words", "plan": "plan"}
+
+
+def _problem(e, n):
+    p = e.payload
+    what = FALLBACK_WHAT.get(p.get("call_type"), str(p.get("call_type")).replace("_", " "))
+    r = str(p.get("reason"))
+    why = "cut off (too long)" if r == "truncated" else f"not usable ({r})"
+    tail = " — a random legal choice was used" if p.get("chosen") not in (None, "None") else ""
+    return f"<li>{n(e.actor)}'s {esc(what)} was {esc(why)}{esc(tail)}</li>"
+
+
+def _thoughts(pid, evs, n):
+    by = lambda t: [e for e in evs if e.actor == pid and e.type == t]
+    ref, summ = by("reflection"), by("summary_update")
+    r = ref[0].payload if ref else {}
+    h = "".join(f"<li>{esc(i['text'])} <span class='tag'>{esc(i['kind'])} · {esc(i['action'])} · {esc(i['confidence'])}</span></li>"
+                for i in r.get("insights", []))
+    body = ("<b>Questions</b><ul>" + "".join(f"<li>{esc(q)}</li>" for q in r.get("questions", [])) + "</ul>"
+            f"<b>Insights</b><ul>{h}</ul><b>Did my beliefs help or hurt?</b><p>{esc(r.get('helped_or_hurt', ''))}</p>"
+            f"<b>Game summary</b><p>{esc(r.get('game_summary', ''))}</p>")
+    if summ:
+        sp = summ[0].payload
+        body += ("<b>Impressions now</b><ul>" + "".join(f"<li>{n(k)}: {esc(v)}</li>" for k, v in sp["friends"].items())
+                 + f"<li>Self: {esc(sp['self'])}</li></ul>")
+    extra = [x for x in by("memory_write")][len(r.get("insights", [])):]
+    more = ([f"<li>Memory {esc(x.payload['action'])} ({esc(x.payload['type'])}): {esc(x.payload['text'])}</li>" for x in extra]
+            + [f"<li>Replaced memory {x.payload['old_id']} with {x.payload['new_id']}</li>" for x in by("memory_supersede")]
+            + [f"<li>Maintenance: merged {esc(x.payload['merged'])}, faded {esc(x.payload['faded'])}</li>" for x in by("memory_maintenance")])
+    if more:
+        body += f"<b>Deep reflection, compression, maintenance</b><ul>{''.join(more)}</ul>"
+    return (f"<details><summary><b>{n(pid)}</b> — {esc(_cut(r.get('helped_or_hurt', '')))}</summary>{body}</details>")
+
+
+def write_game_page(run_dir, game_no) -> Path:
+    run_dir = Path(run_dir)
+    names = _names(run_dir)
+    n = lambda a: esc(names.get(a, a)) if a else ""
+    events = EventLog(run_dir, game_no - 1).read()
+    pub = [e for e in events if e.visibility != "debug"]
+    first = lambda t: next((e for e in pub if e.type == t), None)
+    end, reveal, score, start = first("game_end"), first("role_reveal"), first("score"), first("game_start")
+    roles = reveal.payload["roles"] if reveal else {}
+    seats = list(start.payload["seats"]) if start else list(names)
+    fate = _fate(pub, names)
+    calls = [e for e in events if e.type == "llm_call"]
+    cost = sum(e.payload.get("cost") or 0 for e in calls)
+    if end:
+        won = end.payload["winner"] == "town"
+        head = (f"Game {game_no} — <span class='{'town' if won else 'mafia'}'>{'Town' if won else 'Mafia'} won on day "
+                f"{end.payload['days']}</span> ({esc(REASON.get(end.payload['end_reason'], end.payload['end_reason']))})")
+    else:
+        head = f"Game {game_no} — unfinished"
+    pts = score.payload["points"] if score else {}
+    rows = "".join(f"<tr><td>{n(a)}</td><td>{esc(roles.get(a, '?'))}</td><td>{esc(fate.get(a, 'survived'))}</td>"
+                   f"<td>{pts.get(a, {}).get('points_total', '–')}</td></tr>" for a in seats)
+    out = [f"<p><a href='../dashboard.html'>← Back to dashboard</a></p><h1>{head}</h1>",
+           f"<div class='mute'>{len(calls)} model calls · ${cost:.4f}</div>",
+           "<div class='wrap'><table><tr><th>Player</th><th>Role</th><th>Fate</th><th>Points this game</th></tr>" + rows + "</table></div>"]
+    plans = [e for e in pub if e.type == "plan"]
+    if plans:
+        out.append("<h2>Before the game</h2><p class='mute'>Private plans</p><ul>" + "".join(
+            f"<li><b>{n(e.actor)}</b> <span class='priv'>(private)</span>: {esc(e.payload['plan'])}</li>" for e in plans) + "</ul>")
+    sect = None
+    for e in pub:
+        t, p = e.type, e.payload
+        key = {"night_notes": f"Night {e.day}", "night_action": f"Night {e.day}", "night_resolution": f"Night {e.day}",
+               "morning_announcement": f"Morning, day {e.day}", "speech": f"Day {e.day} — discussion", "pass": f"Day {e.day} — discussion",
+               "vote": f"Day {e.day} — votes", "vote_result": f"Day {e.day} — votes", "last_words": f"Day {e.day} — votes"}.get(t)
+        if key is None:
+            continue
+        if key != sect:
+            out.append(f"<h2>{key}</h2>")
+            sect = key
+        if t == "night_notes":
+            out.append(f"<div class='chat'><b>{n(e.actor)}</b> <span class='priv'>{esc(p['notes'])}</span><span class='tag'>wants to speak: {p['urgency']}</span></div>")
+        elif t == "night_action":
+            verb = "targets" if p["action"] == "target" else "protects"
+            out.append(f"<div class='priv'>{n(e.actor)} ({'mafia' if p['action'] == 'target' else 'doctor'}) {verb} {n(e.targets[0])}</div>")
+        elif t == "night_resolution":
+            res = (f"{n(p['eliminated'])} was eliminated" if p["eliminated"] else f"{n(p['target'])} was saved by the doctor")
+            out.append(f"<div><b>Result:</b> {res}</div>")
+        elif t == "morning_announcement":
+            out.append(f"<div>{esc(p['text'])}</div>")
+        elif t == "speech":
+            tags = "".join([f"<span class='tag'>accuses {', '.join(n(a) for a in p['accuses'])}</span>" if p["accuses"] else "",
+                            "<span class='tag'>replying to an accusation</span>" if p["priority_reply"] else "",
+                            f"<span class='tag'>{esc(p['expression'])}</span>" if p.get("expression") else ""])
+            out.append(f"<div class='chat'><b>{n(e.actor)}</b>{esc(p['message'])}{tags}</div>")
+        elif t == "pass":
+            out.append(f"<div class='mute'>{n(e.actor)} passes</div>")
+        elif t == "vote":
+            out.append(f"<div>{n(e.actor)} → {n(e.targets[0])}</div>")
+        elif t == "vote_result":
+            out.append("<div><b>Result:</b> " + ("tie, nobody voted out" if p["tie"] else f"{n(p['eliminated'])} was voted out") + "</div>")
+        elif t == "last_words":
+            out.append(f"<div class='chat'><b>{n(e.actor)}</b>(last words) {esc(p['message'])}</div>")
+    if end:
+        out.append(f"<h2>Game over</h2><div>{'Town' if end.payload['winner'] == 'town' else 'Mafia'} wins. Roles: "
+                   + esc(", ".join(f"{names.get(a, a)} {r}" for a, r in roles.items())) + "</div>")
+    refl = [e for e in pub if e.phase == "reflect" and e.type != "leaderboard"]
+    if refl:
+        out.append("<h2>After the game — what each player thought</h2>" + "".join(_thoughts(a, refl, n) for a in seats))
+    bad = [e for e in events if e.type == "fallback"]
+    if bad:
+        out.append("<h2>Problems</h2><ul>" + "".join(_problem(e, n) for e in bad) + "</ul>")
+    html = ("<!doctype html><html lang=en><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'>"
+            f"<title>Game {game_no}</title><style>{CSS}</style><main>{''.join(out)}</main></html>")
+    path = run_dir / "games" / f"{game_no:04d}.html"
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(html)
+    os.replace(tmp, path)
+    return path
+
+
+def _pages(run_dir, games):
+    for g in games:
+        k = int(g["game"])
+        src, page = run_dir / "games" / f"{k:04d}.jsonl", run_dir / "games" / f"{k:04d}.html"
+        try:
+            if src.exists() and (not page.exists() or src.stat().st_mtime > page.stat().st_mtime):
+                write_game_page(run_dir, k)
+        except Exception as e:  # one bad log must not block the dashboard
+            print(f"warning: game page {k} not written ({type(e).__name__}: {e})")
+
+
 def write_dashboard(run_dir) -> Path:
     run_dir = Path(run_dir)
     man = json.loads((run_dir / "manifest.json").read_text())
     names = _names(run_dir)
     games, agents = _csv(run_dir / "games.csv"), _csv(run_dir / "agents.csv")
+    _pages(run_dir, games)
     cfg, group = man["run_config"], man["group"]
     pin = ", ".join(man.get("provider_pin") or [])
     done, secs = len(games), sum(float(g["seconds"]) for g in games)

@@ -10,6 +10,7 @@ from pathlib import Path
 import yaml
 
 from mafia.logs.events import EventLog
+from mafia.metrics.compute import IN_GAME
 from mafia.renderers.text import visible
 
 
@@ -62,12 +63,13 @@ def _blocks(games):
         town = sum(g["winner"] == "town" for g in b)
         days = sum(int(g["days"]) for g in b) / len(b)
         bad = sum(int(g["format_errors"]) + int(g["fallbacks"]) for g in b)
+        notes = sum(int(g.get("reflection_issues") or 0) for g in b)
         label = f"{b[0]['game']}–{b[-1]['game']}" if len(b) > 1 else b[0]["game"]
         rows += (f"<tr><td>{label}{'' if len(b) == BLOCK else ' (so far)'}</td><td>{town}</td><td>{len(b) - town}</td>"
                  f"<td>{days:.1f}</td><td>${sum(float(g['cost_usd']) for g in b):.4f}</td>"
-                 f"<td class='{'warn' if bad else ''}'>{bad}</td></tr>")
+                 f"<td class='{'warn' if bad else ''}'>{bad}</td><td>{notes}</td></tr>")
     return ("<h2>Every 5 games</h2><div class='wrap'><table><tr><th>Games</th><th>Town won</th><th>Mafia won</th>"
-            f"<th>Avg length (days)</th><th>Cost</th><th>Problems</th></tr>{rows}</table></div>")
+            f"<th>Avg length (days)</th><th>Cost</th><th>Problems</th><th>Memory bookkeeping notes</th></tr>{rows}</table></div>")
 
 
 def _scoreboard(agents, names):
@@ -89,6 +91,7 @@ def _game(g, names, run_dir):
     head = (f"Game {g['game']} — <span class='{'town' if won else 'mafia'}'>{'Town' if won else 'Mafia'} won on day {g['days']}</span>"
             f" ({esc(REASON.get(g['end_reason'], g['end_reason']))})")
     bad = int(g["format_errors"]) + int(g["fallbacks"])
+    notes = int(g.get("reflection_issues") or 0)
     steps = []
     try:
         for e in visible(EventLog(run_dir, int(g["game"]) - 1).read(), "truth"):
@@ -101,6 +104,7 @@ def _game(g, names, run_dir):
     return (f"<div class='card'><h3>{head}</h3><div>Mafia: <b>{n(g['mafia'])}</b> · Doctor: <b>{n(g['doctor'])}</b></div>"
             f"<div class='mute'>{' · '.join(steps)}</div>"
             + (f"<div class='warn'>{bad} problem(s) with model answers</div>" if bad else "")
+            + (f"<div>{notes} memory bookkeeping note(s)</div>" if notes else "")
             + f"<div><a href='games/{int(g['game']):04d}.html'>Open full game →</a></div></div>")
 
 
@@ -240,9 +244,11 @@ def write_game_page(run_dir, game_no) -> Path:
     refl = [e for e in pub if e.phase == "reflect" and e.type != "leaderboard"]
     if refl:
         out.append("<h2>After the game — what each player thought</h2>" + "".join(_thoughts(a, refl, n) for a in seats))
-    bad = [e for e in events if e.type == "fallback"]
-    if bad:
-        out.append("<h2>Problems</h2><ul>" + "".join(_problem(e, n) for e in bad) + "</ul>")
+    fbs = [e for e in events if e.type == "fallback"]
+    for title, es in (("Problems", [e for e in fbs if e.payload.get("call_type") in IN_GAME]),
+                      ("Memory bookkeeping notes", [e for e in fbs if e.payload.get("call_type") not in IN_GAME])):
+        if es:
+            out.append(f"<h2>{title}</h2><ul>" + "".join(_problem(e, n) for e in es) + "</ul>")
     html = ("<!doctype html><html lang=en><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'>"
             f"<title>Game {game_no}</title><style>{CSS}</style><main>{''.join(out)}</main></html>")
     path = run_dir / "games" / f"{game_no:04d}.html"

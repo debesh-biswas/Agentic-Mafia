@@ -88,6 +88,7 @@ class Memory(Cfg):
     embedding_model: str
     retrieval: Retrieval
     related_beliefs_for_reflection: int
+    dedupe_similarity: float = Field(gt=0, le=1)
     reflection: Reflection
     compression: Compression
     fading: Fading

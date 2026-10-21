@@ -81,11 +81,13 @@ def apply_insights(store, names, vis, game, insights, shown, out, call_type="ref
         kw = dict(game=game, importance=ins.importance, confidence=ins.confidence)
         if dedupe is not None and action in ("add", "supersede"):
             old = store.get(tid) if action == "supersede" else None
-            dup = store.near_duplicate(old.type if old else ins.kind, ins.text, dedupe, old.about if old else about)
+            role = old.role_context if old else ins.role_context or ("any" if ins.kind == "lesson" else None)
+            dup = store.near_duplicate(old.type if old else ins.kind, ins.text, dedupe, old.about if old else about,
+                                       role, exclude=tid if old else None)  # a negated correction must not hit its own target
             if dup:
                 store.reinforce(dup.id, ins.importance, game, cites)
                 w(dup.id, "reinforce", dup.text, dup.type)
-                if old and dup.id != tid:  # the target is still retired, in favour of the memory that already says it
+                if old:  # the target is still retired, in favour of the memory that already says it
                     store.retire(tid, dup.id)
                     out.append(("memory_supersede", vis, dict(old_id=tid, new_id=dup.id)))
                 continue

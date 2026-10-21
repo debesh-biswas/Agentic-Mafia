@@ -24,13 +24,14 @@ def run(st, *insight, game=3, **kw):
 
 def test_near_duplicate_reinforces_instead_of_adding(tmp_path):
     st = store(tmp_path)
+    c = st.add("episodic", "some game", game=1, importance=5)
     a = st.add("belief", BASE, about=["sana"], game=1, importance=5, cites=[])
-    run(st, ins(NEAR, importance=8, cites=[a]))
+    run(st, ins(NEAR, importance=8, cites=[a, c]))
     assert len([m for m in st.active(("belief",))]) == 1
     m = st.get(a)
-    assert (m.text, m.importance, m.game_updated, m.cites) == (BASE, 8, 3, [a])
+    assert (m.text, m.importance, m.game_updated, m.cites) == (BASE, 8, 3, [c])  # self-citation dropped
     run(st, ins(NEAR, importance=2, cites=[a]), game=4)  # never lowers importance; cites not repeated
-    assert (st.get(a).importance, st.get(a).cites, st.get(a).game_updated) == (8, [a], 4)
+    assert (st.get(a).importance, st.get(a).cites, st.get(a).game_updated) == (8, [c], 4)
 
 
 def test_below_threshold_adds_and_different_subject_or_type_do_not_merge(tmp_path):
@@ -115,3 +116,20 @@ def test_old_csv_without_column_still_loads(tmp_path):
             w.writerows(rows)
     assert all(r["reflection_issues"] == 0 for r in rep.load(d)["G"])
     assert "Every 5 games" in write_dashboard(d).read_text()
+
+
+def test_negated_supersede_is_not_swallowed_by_its_own_target(tmp_path):
+    st = store(tmp_path)
+    a = st.add("belief", BASE, about=["sana"], game=1, importance=5)
+    run(st, ins(NEAR, action="supersede", target_id=a))  # nearly identical text (as a negation would be)
+    new = [m for m in st.active(("belief",)) if m.text == NEAR]
+    assert len(new) == 1 and st.get(a).status == "superseded" and st.get(a).superseded_by == new[0].id
+
+
+def test_lessons_only_merge_within_the_same_role(tmp_path):
+    st = store(tmp_path)
+    a = st.add("lesson", BASE, role_context="mafia", game=1, importance=5)
+    run(st, ins(NEAR, kind="lesson", about=[], role_context="villager"))
+    assert len(st.active(("lesson",))) == 2
+    run(st, ins(NEAR, kind="lesson", about=[], role_context="mafia"), game=4)
+    assert len(st.active(("lesson",))) == 2 and st.get(a).game_updated == 4

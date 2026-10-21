@@ -49,9 +49,9 @@ def compress(store, mcfg, names, call, me: str, game: int) -> tuple[list[tuple[s
 
 
 def fade(store, mcfg, game: int) -> int:
-    """Low-importance memories not retrieved for a long time stop being candidates (no LLM)."""
+    """Low-importance memories not retrieved, created or reinforced for a long time stop being candidates (no LLM)."""
     f = mcfg.fading
     ids = [m.id for m in store.active() if m.importance <= f.max_importance
-           and (m.last_retrieved_game if m.last_retrieved_game is not None else m.game_created) <= game - f.unretrieved_for_games]
+           and max(m.last_retrieved_game or 0, m.game_updated, m.game_created) <= game - f.unretrieved_for_games]
     store.set_status(ids, "faded")
     return len(ids)

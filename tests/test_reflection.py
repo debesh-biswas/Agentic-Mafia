@@ -325,14 +325,16 @@ def test_fading_boundaries(tmp_path):
     s = store(tmp_path)
     f = lambda t, g, imp, last=None: (s.add(t, f"m{g}{imp}", game=g, importance=imp), last)
     cases = {"old_low": f("belief", 10, 3), "too_new": f("belief", 11, 3), "important": f("belief", 1, 4),
-             "retrieved_recently": f("belief", 1, 2, 11), "retrieved_long_ago": f("belief", 1, 2, 10)}
+             "retrieved_recently": f("belief", 1, 2, 11), "retrieved_long_ago": f("belief", 1, 2, 10),
+             "reinforced_recently": f("belief", 1, 2)}
     for i, last in cases.values():
         if last:
             s.touch([i], last)
+    s.reinforce(cases["reinforced_recently"][0], 2, 25)  # game_updated counts as freshness
     assert fade(s, MC, 30) == 2  # created/retrieved <= 30-20=10 and importance <= 3
     st = {k: s.get(i).status for k, (i, _) in cases.items()}
     assert st == {"old_low": "faded", "too_new": "active", "important": "active",
-                  "retrieved_recently": "active", "retrieved_long_ago": "faded"}
+                  "retrieved_recently": "active", "retrieved_long_ago": "faded", "reinforced_recently": "active"}
 
 
 def test_deep_reflection_uses_shared_apply_and_shown_ids(tmp_path):

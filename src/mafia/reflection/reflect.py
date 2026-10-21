@@ -85,6 +85,9 @@ def apply_insights(store, names, vis, game, insights, shown, out, call_type="ref
             if dup:
                 store.reinforce(dup.id, ins.importance, game, cites)
                 w(dup.id, "reinforce", dup.text, dup.type)
+                if old and dup.id != tid:  # the target is still retired, in favour of the memory that already says it
+                    store.retire(tid, dup.id)
+                    out.append(("memory_supersede", vis, dict(old_id=tid, new_id=dup.id)))
                 continue
         if action == "update":
             store.update(tid, ins.text, ins.confidence, ins.importance, game)

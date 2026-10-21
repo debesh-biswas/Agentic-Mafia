@@ -186,6 +186,12 @@ class MemoryStore:
                 best, top = m, s
         return best
 
+    def retire(self, old_id, new_id) -> None:
+        """Hide `old_id` as superseded by an existing memory."""
+        with self._lock:
+            self._db.execute("UPDATE memories SET status='superseded', superseded_by=? WHERE id=?", (new_id, old_id))
+            self._db.commit()
+
     def set_status(self, ids, status) -> None:
         ids = list(ids)
         with self._lock:

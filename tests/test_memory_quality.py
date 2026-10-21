@@ -46,7 +46,8 @@ def test_reinforce_event_and_supersede_dedupes(tmp_path):
     b = st.add("belief", "other thing entirely", about=["sana"], game=1, importance=5)
     out = reflect(st, MC, NAMES, caller([{"questions": ["q?"]}, insights(ins(NEAR, action="supersede", target_id=b))]),
                   outcome(game=3))
-    assert st.get(b).status == "active"  # supersede text duplicated a: reinforce a, no new memory
+    assert (st.get(b).status, st.get(b).superseded_by) == ("superseded", a)  # duplicate of a: reinforce a, retire b
+    assert ("memory_supersede", "private:dev", dict(old_id=b, new_id=a)) in out
     assert [(p["memory_id"], p["action"]) for t, _, p in out if t == "memory_write"][0] == (a, "reinforce")
     assert not [m for m in st.active() if m.text == NEAR]
 

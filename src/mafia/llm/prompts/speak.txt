@@ -5,5 +5,6 @@ Your notes: {notes}
 Today so far:
 {today_transcript}
 {reply_line}
-Say something as {name} (max {speech_max_words} words), or pass.
+Your messages so far today: {my_messages}
+Say something as {name} (max {speech_max_words} words), or pass. React to what actually happened: a vote, an elimination, or something someone said. If you accuse someone, say why. Say something new; don't repeat what you already said today.
 Return: {{"message": string or null, "accuses": [names], "urgency": 0-4, "expression": one of [neutral, happy, laughing, suspicious, defensive, nervous, angry, surprised, thinking]}}

@@ -7,6 +7,6 @@ seed: 20261020
 rules_config: config/rules.yaml
 personas_config: config/personas.yaml
 memory_config: config/memory.yaml
-prompt_version: 1
+prompt_version: 2
 record_llm_responses: true
 snapshot_memory_every: 10

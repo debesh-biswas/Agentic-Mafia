@@ -117,7 +117,7 @@ def test_local_reasoning_param_and_token_budgets():
     cl.call("speak", "s", "u", VoteDecision, "a")
     cl.call("deep_reflect", "s", "u", VoteDecision, "a")
     cl.call("summaries", "s", "u", VoteDecision, "a")
-    assert [c["reasoning_effort"] for c in sdk.calls] == ["low", "medium", "low"]
+    assert [c["reasoning_effort"] for c in sdk.calls] == ["medium", "medium", "low"]
     assert [c["max_tokens"] for c in sdk.calls] == [2000, 4000, 1500] and "extra_body" not in sdk.calls[0]
 
 

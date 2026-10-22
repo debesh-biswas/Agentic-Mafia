@@ -60,8 +60,9 @@ def test_game_pages(tmp_path):
     assert "<script>" not in page and "&lt;script&gt;x" in page
     assert page.index("Night 1") < page.index("Day 1 — discussion") < page.index("Day 1 — votes") < page.index("Game over")
     msgs = [e.payload["message"] for e in EventLog(d, 0).read() if e.type == "speech"][:3]
-    pos = [page.index(m.replace("<", "&lt;")) for m in msgs[1:]]
-    assert pos == sorted(pos)
+    at = 0
+    for m in msgs[1:]:  # in order, even if mock text repeats
+        at = page.index(m.replace("<", "&lt;"), at) + 1
 
 
 def test_control_game_page_has_no_reflection(tmp_path):

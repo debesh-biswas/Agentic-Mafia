@@ -62,6 +62,10 @@ def _transcript(v: AgentView) -> str:
     return "\n".join(_line(t) for t in v.today_transcript or []) or "(nobody has spoken yet)"
 
 
+def _mine(v: AgentView) -> str:
+    return " | ".join(t.message for t in v.today_transcript or [] if t.speaker == v.me and t.message) or "(none yet)"
+
+
 def _with_retry(text: str, v: AgentView) -> str:
     return f"{text}\n\n{v.retry_error}" if v.retry_error else text
 
@@ -89,7 +93,7 @@ def user_message_speak(v: AgentView, rules: Rules) -> str:
     return _with_retry(template("speak").format(
         n=v.day, alive=_names(v.alive), total=v.turns_left_today, mine=v.my_turns_left,
         public_facts=_facts(v), notes=v.my_notes or "(none yet)", today_transcript=_transcript(v),
-        reply_line=v.reply_prompt or "", name=v.me, **_caps(rules)), v)
+        reply_line=v.reply_prompt or "", my_messages=_mine(v), name=v.me, **_caps(rules)), v)
 
 
 def user_message_vote(v: AgentView, rules: Rules) -> str:

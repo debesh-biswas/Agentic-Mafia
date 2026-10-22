@@ -7,7 +7,7 @@ reasoning_param: reasoning_effort      # verify in M2; if unsupported, set effor
 reasoning:
   plan: medium
   night: medium
-  speak: low
+  speak: medium                        # plain speech needs a moment of thought
   vote: medium
   last_words: low
   reflect: medium

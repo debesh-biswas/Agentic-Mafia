@@ -4,4 +4,5 @@ What you concluded after each:
 {last_helped_or_hurt}
 Your current view of yourself: {self_summary}
 Is there a pattern in your own judgment, such as reads you keep getting wrong or habits that cost you? Write up to 3 insights, same rules as before.
+Plain words, specific examples from those games; don't restate your personality description.
 Return: {{"insights": [...same shape...]}}

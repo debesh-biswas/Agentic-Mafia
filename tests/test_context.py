@@ -168,3 +168,26 @@ def test_speak_reply_line_and_retry_error():
     u = user_message_speak(v, R)
     assert "Tess just accused you." in u and u.endswith("Your last answer was invalid: x.")
     assert "Turns left today: 10 (yours: 2)" in u
+
+
+def _speak_view(transcript):
+    from mafia.engine.views import TranscriptLine
+    return AgentView(me="Tess", my_role=Role.VILLAGER, day=2, phase=Phase.DISCUSSION, alive=["Tess", "Dev"], dead=[], public_facts=[], my_notes="",
+                     today_transcript=[TranscriptLine(speaker=s, message=m, kind="speech") for s, m in transcript],
+                     turns_left_today=4, my_turns_left=2)
+
+
+def test_persona_block_plain_lines():
+    b = persona_block(PS.personas[0], PS)
+    assert "You're a real person, not a character" in b and "For tone only" in b
+
+
+def test_speak_shows_own_messages_today():
+    u = user_message_speak(_speak_view([("Tess", "why vote Dev?"), ("Dev", "no reason"), ("Tess", "still odd")]), R)
+    assert "Your messages so far today: why vote Dev? | still odd" in u
+    assert "Your messages so far today: (none yet)" in user_message_speak(_speak_view([("Dev", "hi")]), R)
+
+
+def test_reflect_insights_plain_notes():
+    from mafia.llm.prompts import template
+    assert "Write like private notes to yourself" in template("reflect_insights")

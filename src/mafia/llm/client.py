@@ -11,7 +11,8 @@ import openai
 from mafia.config import ModelCfg
 from pydantic import BaseModel, ValidationError
 
-ATTEMPTS = 5  # network/5xx tries per request
+ATTEMPTS = 8  # network/429/5xx tries per request; with the delay cap this waits ~2 min in total
+MAX_BACKOFF_S = 60.0  # shared provider pools can stay overloaded for a minute or more
 
 
 class LLMError(Exception):
@@ -173,7 +174,7 @@ class LLMClient:
                 except Exception as e:
                     if not _retryable(e) or retries + 1 >= ATTEMPTS:
                         raise
-                    await asyncio.sleep(self.backoff_s * 2 ** retries)
+                    await asyncio.sleep(min(self.backoff_s * 2 ** retries, MAX_BACKOFF_S))
                     retries += 1
         msg, u = r.choices[0].message, getattr(r, "usage", None)
         provider = getattr(r, "provider", None)

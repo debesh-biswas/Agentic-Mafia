@@ -10,11 +10,11 @@ from mafia.reflection.reflect import apply_insights
 LAST = 5
 
 
-def deep_reflect(store, names, call, me: str, game: int) -> list[tuple[str, str, dict]]:
+def deep_reflect(store, names, call, me: str, game: int, dedupe=None) -> list[tuple[str, str, dict]]:
     """call(call_type, schema, user) -> parsed. Returns event specs. Shown ids = the episodic and helped_or_hurt
     memories in the prompt; `hoh_ids` meta is maintained by reflect()."""
     epi = sorted(store.active(("episodic",)), key=lambda m: (m.game_created, m.id))[-LAST:]
-    hoh = [m for m in (store.get(i) for i in json.loads(store.meta_get("hoh_ids", "[]"))[-LAST:]) if m.status == "active"]
+    hoh = [m for m in (store.get(i) for i in json.loads(store.meta_get("hoh_ids", "[]"))) if m.status == "active"][-LAST:]
     if not epi and not hoh:
         return []
     try:
@@ -27,5 +27,5 @@ def deep_reflect(store, names, call, me: str, game: int) -> list[tuple[str, str,
     keep = [i for i in res.insights if i.kind != "lesson"]
     out = [("fallback", "debug", dict(call_type="deep_reflect", reason=f"dropped {len(res.insights) - len(keep)} lesson insight(s)",
                                       chosen=None))] if len(keep) < len(res.insights) else []
-    apply_insights(store, names, f"private:{me}", game, keep, {m.id: m for m in epi + hoh}, out, "deep_reflect")
+    apply_insights(store, names, f"private:{me}", game, keep, {m.id: m for m in epi + hoh}, out, "deep_reflect", dedupe)
     return out

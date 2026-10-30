@@ -165,6 +165,36 @@ class MemoryStore:
                 raise
         return new_id
 
+    def reinforce(self, id, importance, game, cites=()) -> None:
+        """A near-duplicate was proposed: keep the text, raise importance, refresh game_updated, union cites."""
+        with self._lock:
+            m = self.get(id)
+            merged = m.cites + [c for c in dict.fromkeys(cites) if c not in m.cites and c != id]
+            self._db.execute("UPDATE memories SET importance=?, game_updated=?, cites=? WHERE id=?",
+                             (min(10, max(m.importance, importance)), game, json.dumps(merged), id))
+            self._db.commit()
+
+    def near_duplicate(self, type, text, threshold, about=None, role=None, exclude=None) -> Memory | None:
+        """Most similar active memory of `type` (beliefs: sharing a subject; lessons: same role_context)
+        at cosine >= threshold, else None. `exclude` is an id to skip (a supersede target)."""
+        e = np.asarray(self.embedder.embed(text), dtype=np.float32)
+        best, top = None, threshold
+        for m in self.active((type,)):
+            if m.id == exclude or (type == "lesson" and m.role_context != role):
+                continue
+            if type == "belief" and not (set(m.about) & set(about or ()) or not (m.about or about)):
+                continue  # different subjects never merge
+            s = float(m.embedding @ e)
+            if s >= top:
+                best, top = m, s
+        return best
+
+    def retire(self, old_id, new_id) -> None:
+        """Hide `old_id` as superseded by an existing memory."""
+        with self._lock:
+            self._db.execute("UPDATE memories SET status='superseded', superseded_by=? WHERE id=?", (new_id, old_id))
+            self._db.commit()
+
     def set_status(self, ids, status) -> None:
         ids = list(ids)
         with self._lock:

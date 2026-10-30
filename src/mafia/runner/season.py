@@ -51,6 +51,14 @@ def _default_factory(run, rules, scoring, pcfg, llm, run_dir=None, mock=False):
             for p in pcfg.personas}
 
 
+def _dashboard(run_dir: Path) -> None:
+    try:
+        from mafia.renderers.dashboard import write_dashboard
+        write_dashboard(run_dir)
+    except Exception as e:  # a dashboard problem must never stop the season
+        print(f"warning: dashboard not updated ({type(e).__name__}: {e})")
+
+
 class CheckpointMissing(RunExists):
     pass
 
@@ -123,6 +131,7 @@ def _park(path: Path) -> None:
 
 
 def run_season(run_cfg, *, mock=False, agent_factory=None, on_game=None, resume=False, games=None,
+               dashboard_every: int | None = None,
                runs_dir: Path = ROOT / "runs"):
     """Run (or resume) a season. Memory-group crash safety (per-game DB checkpoints, restore on resume) applies only
     to the default agent factory; a custom agent_factory manages its own state."""
@@ -151,6 +160,8 @@ def run_season(run_cfg, *, mock=False, agent_factory=None, on_game=None, resume=
         compute.truncate(run_dir / f, last)
     write_manifest(run_dir, run, model, scoring.version)
     agents = {}
+    if dashboard_every:
+        _dashboard(run_dir)
     ckpt_memory = run.group == "memory" and not agent_factory
     if ckpt_memory:
         _restore_memory(run_dir, last, [p.agent_id for p in personas])
@@ -200,6 +211,8 @@ def run_season(run_cfg, *, mock=False, agent_factory=None, on_game=None, resume=
             os.replace(tmp, state_path)
             if ckpt_memory:
                 _prune_ckpt(run_dir / "memory" / "ckpt", g)
+            if dashboard_every and (g % dashboard_every == 0 or g == total):
+                _dashboard(run_dir)
             if on_game:
                 on_game(game.events, g)
         write_manifest(run_dir, run, model, scoring.version, ended=True)

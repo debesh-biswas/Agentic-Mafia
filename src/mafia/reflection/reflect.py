@@ -62,9 +62,10 @@ def wrote(vis, i, action, text, type):
     return ("memory_write", vis, dict(memory_id=i, type=type, action=action, text=text))
 
 
-def apply_insights(store, names, vis, game, insights, shown, out, call_type="reflect") -> None:
+def apply_insights(store, names, vis, game, insights, shown, out, call_type="reflect", dedupe=None) -> None:
     """DRD 8.1 action semantics, shared with deep reflection. `shown` maps id -> memory for the ids the model was
-    shown; targets and cites outside it are rejected. Appends event specs to `out`."""
+    shown; targets and cites outside it are rejected. With `dedupe` (cosine), an add or supersede whose text nearly
+    repeats an active memory reinforces that memory instead. Appends event specs to `out`."""
     by_name = {n.lower(): a for a, n in names.items()}
 
     def w(*a):
@@ -78,6 +79,18 @@ def apply_insights(store, names, vis, game, insights, shown, out, call_type="ref
             out.append(_fallback(call_type, f"invalid target_id {tid} for {action}; treated as add", "add"))
             action = "add"
         kw = dict(game=game, importance=ins.importance, confidence=ins.confidence)
+        if dedupe is not None and action in ("add", "supersede"):
+            old = store.get(tid) if action == "supersede" else None
+            role = old.role_context if old else ins.role_context or ("any" if ins.kind == "lesson" else None)
+            dup = store.near_duplicate(old.type if old else ins.kind, ins.text, dedupe, old.about if old else about,
+                                       role, exclude=tid if old else None)  # a negated correction must not hit its own target
+            if dup:
+                store.reinforce(dup.id, ins.importance, game, cites)
+                w(dup.id, "reinforce", dup.text, dup.type)
+                if old:  # the target is still retired, in favour of the memory that already says it
+                    store.retire(tid, dup.id)
+                    out.append(("memory_supersede", vis, dict(old_id=tid, new_id=dup.id)))
+                continue
         if action == "update":
             store.update(tid, ins.text, ins.confidence, ins.importance, game)
             w(tid, "update", ins.text, store.get(tid).type)
@@ -90,7 +103,7 @@ def apply_insights(store, names, vis, game, insights, shown, out, call_type="ref
             w(i, "add", ins.text, ins.kind)
 
 
-def reflect(store, mcfg, names: dict[str, str], call, o: GameOutcomeForAgent) -> list[tuple[str, str, dict]]:
+def reflect(store, mcfg, names: dict[str, str], call, o: GameOutcomeForAgent, ingame_ids=()) -> list[tuple[str, str, dict]]:
     """call(call_type, schema, user) -> parsed; may raise LLMFormatError. Returns (type, visibility, payload) specs."""
     vis, game, out = f"private:{o.agent_id}", o.game_no, []
     f = outcome_fields(o)
@@ -109,6 +122,8 @@ def reflect(store, mcfg, names: dict[str, str], call, o: GameOutcomeForAgent) ->
     related = [m for m in cands if m.id not in seen][:mcfg.related_beliefs_for_reflection]
     for m in per_q + related:
         shown[m.id] = m
+    for i in ingame_ids:  # memories retrieved during the game may be updated too
+        shown.setdefault(i, store.get(i))
     try:
         res = call("reflect", S.ReflectInsights, template("reflect_insights").format(
             questions="\n".join(f"- {q}" for q in qs), retrieved_for_questions=render(per_q, names) or "(none)",
@@ -118,7 +133,8 @@ def reflect(store, mcfg, names: dict[str, str], call, o: GameOutcomeForAgent) ->
     out.append(("reflection", vis, dict(questions=qs, insights=[i.model_dump() for i in res.insights],
                                         helped_or_hurt=res.helped_or_hurt, game_summary=res.game_summary)))
 
-    apply_insights(store, names, vis, game, res.insights[:mcfg.reflection.max_insights], shown, out)
+    apply_insights(store, names, vis, game, res.insights[:mcfg.reflection.max_insights], shown, out,
+                  dedupe=mcfg.dedupe_similarity)
     store.touch([k for k in res.keep_ids if k in shown], game)
     i = store.add("reflection", res.helped_or_hurt, game=game, importance=HELPED_OR_HURT_IMPORTANCE)
     hoh = json.loads(store.meta_get("hoh_ids", "[]"))  # lets deep reflection find these (DRD 8.2)

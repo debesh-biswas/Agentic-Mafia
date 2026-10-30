@@ -3,7 +3,7 @@ base_url: https://openrouter.ai/api/v1
 api_key_env: OPENROUTER_API_KEY
 model: openai/gpt-oss-20b
 provider_pin:                          # sent as the OpenRouter "provider" field
-  order: ["<PROVIDER_NAME>"]           # choose before calibration; never change during a run
+  order: ["CoreWeave"]                 # pinned 2026-10-20 (DeepInfra shared pool kept overloading); never change during a run
   allow_fallbacks: false
   require_parameters: true
 structured_output: json_schema
@@ -11,7 +11,7 @@ reasoning_param: openrouter            # sends {"reasoning": {"effort": "<level>
 reasoning:
   plan: medium
   night: medium
-  speak: low
+  speak: medium                        # plain speech needs a moment of thought
   vote: medium
   last_words: low
   reflect: medium
@@ -19,6 +19,6 @@ reasoning:
   deep_reflect: medium
   compress: low
 temperature: 0.8
-max_output_tokens: {default: 600, reflect: 1500, summaries: 1200}
+max_output_tokens: {default: 2000, reflect: 4000, summaries: 1500}   # gpt-oss reasoning counts against this; 600 truncated votes/nights
 timeout_s: 120
-max_concurrency: 7
+max_concurrency: 3                     # shared upstream pools rate-limit bursts of 7

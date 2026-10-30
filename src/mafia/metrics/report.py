@@ -28,6 +28,7 @@ def load(d: Path) -> dict:
         r["game"] = int(r["game"])
         for k in ("saves", "format_errors", "fallbacks", "self_leaks"):
             r[k] = int(r[k])
+        r["reflection_issues"] = int(r.get("reflection_issues") or 0)  # absent in older runs
     for r in A:
         r["game"] = int(r["game"])
         for k in ("points_total", "votes_cast", "votes_on_mafia", "days_alive", "memories_active", "beliefs_active",
@@ -162,7 +163,8 @@ def build(runs: list[dict], names: dict[str, str]) -> str:
 
     o.append("## 5. Reliability\n")
     o.append(windowed(runs, lambda g, a: [mean(x["format_errors"] for x in g), mean(x["fallbacks"] for x in g),
-                                           mean(x["self_leaks"] for x in g)], ["fmt err/game", "fallbacks/game", "self-leaks/game"]))
+                                           mean(x["self_leaks"] for x in g), mean(x["reflection_issues"] for x in g)],
+                      ["fmt err/game", "fallbacks/game", "self-leaks/game", "memory bookkeeping notes/game"]))
 
     o.append("## 6. Memory stats\n")
     shown = False

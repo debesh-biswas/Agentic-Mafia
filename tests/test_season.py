@@ -111,11 +111,11 @@ def test_csv_columns_and_play_mock(tmp_path):
     run_season(cfg(tmp_path, 1, "c"), mock=True, agent_factory=factory, runs_dir=tmp_path)
     assert next(csv.reader(open(tmp_path / "c/games.csv"))) == compute.GAMES_COLS
     assert ",".join(compute.GAMES_COLS) == ("run,group,game,seed,winner,end_reason,days,mafia,doctor,saves,mislynches,ties,"
-        "format_errors,fallbacks,self_leaks,llm_calls,tokens_in,tokens_out,cost_usd,seconds,scoring_version,prompt_version")
+        "format_errors,fallbacks,self_leaks,llm_calls,tokens_in,tokens_out,cost_usd,seconds,scoring_version,prompt_version,reflection_issues")
     assert ",".join(compute.AGENTS_COLS) == (
         "run,group,game,agent,role,team,team_won,alive_at_end,days_alive,points_total,points_win,points_votes,"
         "points_saves,points_mislynch,votes_cast,votes_on_mafia,speeches,passes,words_spoken,accusations_made,"
-        "times_accused,priority_replies,format_errors,fallbacks,self_leak,memories_active,beliefs_active,lessons_active")
+        "times_accused,priority_replies,format_errors,fallbacks,self_leak,memories_active,beliefs_active,lessons_active,reflection_issues")
     assert next(csv.reader(open(tmp_path / "c/agents.csv"))) == compute.AGENTS_COLS
     last = [json.loads(l) for l in (tmp_path / "c/games/0001.jsonl").read_text().splitlines()][-1]
     assert last["type"] == "score"

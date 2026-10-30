@@ -5,6 +5,7 @@ retrieval:
   recency_decay_per_game: 0.90
   include_failed_lessons: 2
 related_beliefs_for_reflection: 8
+dedupe_similarity: 0.90   # new insight this similar to an active memory reinforces it instead of adding
 reflection:
   questions: 3
   memories_per_question: 5

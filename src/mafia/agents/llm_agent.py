@@ -32,6 +32,7 @@ class LLMAgent:
         self.pending_records: list[dict] = []
         self.plan_text, self.notes_history, self.role_line = "", {}, ""
         self.game_no, self.leaderboard_text, self.memories_text, self._lb_in_system = 0, "", "", False
+        self.recalled: set[int] = set()  # memory ids retrieved this game; reflection may update them
 
     def begin_game(self, game_no: int, leaderboard_text: str = "") -> None:
         """Runner sets this before each game; only the memory group ever shows the leaderboard."""
@@ -55,6 +56,7 @@ class LLMAgent:
     def _recall(self, query: str, k=None, types=None):
         mems = retrieve(self.memory, query, self.game_no, self.memory_cfg.retrieval, k=k, types=types)
         self.memories_text = render(mems, self.names)
+        self.recalled |= {m.id for m in mems}
         return mems
 
     def drain_records(self) -> list[dict]:
@@ -69,7 +71,7 @@ class LLMAgent:
 
     def plan(self, view):
         self.role_line, self.plan_text, self.notes_history = C.role_line(view.my_role), "", {}
-        self.memories_text = ""
+        self.memories_text, self.recalled = "", set()
         if self.group == "memory":
             sums = self.memory.get_summaries()
             self.friends = friend_lines(self.persona, self.personas, sums)  # seeded at construction, so complete
@@ -107,12 +109,12 @@ class LLMAgent:
             return self._call(call_type, schema, user, leaderboard=False)
 
         try:
-            specs = reflect(self.memory, self.memory_cfg, self.names, call, outcome)
+            specs = reflect(self.memory, self.memory_cfg, self.names, call, outcome, sorted(self.recalled))
             specs += summarize(self.memory, self.names, self.agent_id, call, outcome.game_no,
                                outcome.update_style_line, outcome.self_insight_line)
             g, mc = outcome.game_no, self.memory_cfg
             if g % mc.deep_reflection_every_games == 0:
-                specs += deep_reflect(self.memory, self.names, call, self.agent_id, g)
+                specs += deep_reflect(self.memory, self.names, call, self.agent_id, g, mc.dedupe_similarity)
             if g % mc.compression.every_games == 0:
                 more, merged = compress(self.memory, mc, self.names, call, self.agent_id, g)
                 specs += more + [("memory_maintenance", f"private:{self.agent_id}",
